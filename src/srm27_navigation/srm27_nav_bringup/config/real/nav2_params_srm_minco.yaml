@@ -1011,6 +1011,25 @@ behavior_server:
     esdf_search_samples: 36
     esdf_unknown_is_seed: True
 
+    # === 脱困提前退出（P1）===
+    # 语义：链路 A 的 escaped_clearance 在链路 B 上的对应物。原实现的出口只有
+    # "走满 backup_dist(1.0 m)" / "碰撞预演失败" / "time_allowance(默认 10 s) 超时"，
+    # 于是"车已脱离危险、方向早已无意义"之后还会按冻结的方向继续推满 1 m。
+    # 2026-11-03 仿真实测：4 次 backup 全部报 completed successfully，同期自身净空
+    # 0.978 -> 0.369 -> 0.321 -> 0.204 -> 0.006 m 单调下降，最终把车顶死在障碍上。
+    #
+    # ⚠ 实车注意：提前退出会让备份行为只走 0.3~0.5 m 就把控制权交回重规划，
+    #   于是"备份次数"会比原来多、"单次备份"会更短。首验请盯 diagnostics 的
+    #   recovery_enter_count 与总任务时长，确认没有变成"退一步又退回来"的循环。
+    early_exit_enable: True                                # 是否启用提前退出
+    # 阈值必须 > 代价地图 robot_radius(0.40，见本文件 costmap 段)：否则全局规划器
+    # 把"车自己那一格"判成内接膨胀里的障碍，重规划仍然失败，退出等于白退。
+    early_exit_clearance: 0.55                             # 自身净空超过它即认为已在正常空地（米）
+    early_exit_hold_cycles: 3                              # 连续 N 个周期（10 Hz → 0.3 s）满足才退出
+    early_exit_min_travel: 0.30                            # 至少先真走出这么多米才有资格判"脱困了"（米）
+    early_exit_min_time: 1.0                               # 至少先跑这么久（秒），同时给雷达留出重新标记时间
+    early_exit_require_obstacles: True                     # 空图保护：整张图无致命障碍时不认净空结论
+
 waypoint_follower:
   ros__parameters:
     use_sim_time: False

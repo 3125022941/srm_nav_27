@@ -65,10 +65,10 @@
 ign_sim_pointcloud_tool:
   ros__parameters:
     pcd_topic: livox/lidar                         # 输入仿真激光雷达点云话题
-    n_scan: 32                                     # 激光雷达垂直扫描线数
-    horizon_scan: 1875                             # 每条扫描线的水平采样点数
+    n_scan: 32                                     # 垂直扫描线数（须 = 几何 YAML 的 vertical_samples）
+    horizon_scan: 600                              # 每线水平采样点数（须 = 几何 YAML 的 samples）
     ang_bottom: 7.0                                # 雷达垂直视场的底部角度（度）
-    ang_res_y: 1.903225806451613  # (7+52) / (32-1) # 垂直方向相邻扫描线的角分辨率（度）
+    ang_res_y: 1.903225806451613  # (7+52) / (32-1) # 垂直角分辨率（度，须 = 视场/线数）
     min_range: 0.1                                 # 丢弃雷达近盲区内的点（米）
     max_range: 39.9                                # 丢弃40米无回波量程点（米）
     scan_period: 0.0                               # GPU雷达整帧同时采样，逐点时间偏移为0
@@ -79,10 +79,14 @@ point_lio:
     prop_at_freq_of_imu: True                           # 是否按IMU频率进行状态传播
     check_satu: True                                    # 是否检查IMU饱和
     init_map_size: 10                                   # 初始化地图所需的最少点数
-    point_filter_num: 8                                 # 点云抽样间隔，数值越大点越稀疏
+    # ⚠ 仿真专用：仿真 gpu_lidar 是 60000 点/帧 @20 Hz = 120 万点/秒，约为 MID-360
+    #   实车（约 20 万点/秒）的 6 倍。按实车标的 8 会让 Point-LIO 跟不上（实测 odom
+    #   只有 ~2.6 Hz，进而撞上 fake_vel_transform.odom_timeout=0.25s 与
+    #   FollowPath.state_timeout=0.10s 两道闸门，车直接不动）。上实车改回 8。
+    point_filter_num: 32                                # 点云抽样间隔（仿真 32 / 实车 8）
     space_down_sample: True                             # 是否进行空间下采样
-    filter_size_surf: 0.2                               # 用于平面特征的体素滤波尺寸（米）
-    filter_size_map: 0.2                                # 用于地图点云的体素滤波尺寸（米）
+    filter_size_surf: 0.3                               # 平面特征体素（仿真 0.3 / 实车 0.2）
+    filter_size_map: 0.3                                # 地图点云体素（仿真 0.3 / 实车 0.2）
     ivox_nearby_type: 18                                # iVox邻域类型（0/6/18/26邻域）
     runtime_pos_log_enable: False                       # 是否记录运行时位姿日志
 
@@ -470,7 +474,11 @@ controller_server:
       replan_frequency: 10.0                            # 后台重规划频率（Hz）
       planning_horizon: 3.0                             # 局部路径截取视野（米），与 8 m 局部地图配套
       planning_deadline_ms: 30.0                        # 单次规划时间预算（毫秒）
-      state_timeout: 0.10                               # 状态允许的最大年龄（秒）
+      # ⚠ 仿真专用：LIO 模式（use_lio_odometry:=True）下 odom 由 Point-LIO 出，实测
+      #   ~7 Hz（优化点云抽样后；优化前只有 2.6 Hz），一个周期就超过 0.10 s，控制器会
+      #   一直判"状态过期"→ 返回零速 → 车不动/到点了却 ABORT。真值模式(50 Hz)用
+      #   0.10 s 没问题，所以这里按仿真 LIO 链路放宽；上实车沿用实车参数文件的 0.25 s。
+      state_timeout: 0.50                               # 状态允许的最大年龄（仿真 LIO 0.5 / 真值 0.1）
       map_timeout: 0.30                                 # 距离场允许的最大年龄（秒）
       trajectory_max_age: 0.30                          # 轨迹允许的最大年龄（秒）
       build_grace_period: 1.0                           # 无可用轨迹时的零输出宽限（秒）
@@ -499,6 +507,7 @@ controller_server:
         max_position_jump: 0.75                         # 位置跳变阈值（米），超过按定位重置
         max_yaw_jump: 1.20                              # 航向跳变阈值（弧度）
         velocity_filter_alpha: 0.35                     # 速度一阶低通系数（0 表示关闭）
+        # 试过 0.15（想压 LIO 差分速度抖动）：实测无改善（平移反而更小），已回滚。
 
       minco:                                            # MINCO 优化器
         polynomial_order: 5                             # 只支持五次多项式
@@ -844,6 +853,23 @@ behavior_server:
     esdf_search_radius: 0.4                                # 环形搜索半径（米），应略大于膨胀半径
     esdf_search_samples: 36                                # 环形搜索采样数量
     esdf_unknown_is_seed: True                             # 未知区域是否按障碍处理（与控制器 safety.unknown_is_obstacle 保持一致）
+
+    # === 脱困提前退出（P1）===
+    # 语义：链路 A（控制器内部脱困）的 escaped_clearance 在链路 B 上的对应物。
+    # 原实现的出口只有 "走满 backup_dist(1.0 m)" / "碰撞预演失败" / "time_allowance
+    # (默认 10 s) 超时"三种，于是"车已脱离危险、方向早已无意义"之后还会按进入时
+    # 冻结的方向继续推满 1 m。2026-11-03 实测：4 次 backup 全部报 completed
+    # successfully，同期自身净空 0.978 -> 0.369 -> 0.321 -> 0.204 -> 0.006 m
+    # 单调下降，最终把车顶死在障碍上。
+    early_exit_enable: True                                # 是否启用提前退出
+    # 阈值必须 > 代价地图 robot_radius(0.40)：否则全局规划器会把"车自己那一格"
+    # 判成内接膨胀里的障碍，重规划仍然失败（那 10 条 "Either of the start or goal
+    # pose are an obstacle!" 即此），退出等于白退。0.55 = 0.40 + 0.15 余量。
+    early_exit_clearance: 0.55                             # 自身净空超过它即认为已在正常空地（米）
+    early_exit_hold_cycles: 3                              # 连续 N 个周期（10 Hz → 0.3 s）满足才退出
+    early_exit_min_travel: 0.30                            # 至少先真走出这么多米才有资格判"脱困了"（米）
+    early_exit_min_time: 1.0                               # 至少先跑这么久（秒），同时给雷达留出重新标记时间
+    early_exit_require_obstacles: True                     # 空图保护：整张图无致命障碍时不认净空结论
 
 waypoint_follower:
   ros__parameters:

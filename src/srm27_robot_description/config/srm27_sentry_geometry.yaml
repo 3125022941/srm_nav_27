@@ -93,8 +93,17 @@ lidar:
   mesh_sdf: model://mid360/meshes/mid360.dae
   mesh_sdf_origin_rpy: [0.0, 0.0, 3.141592653589793]
   mass: 0.25
-  update_rate: 20
-  samples: 1875
+  # ⚠ 频率与点密度按 MID-360 实车口径：10 Hz、约 20 万点/秒。
+  #   32 线 × 600 点 = 19200 点/帧 @10 Hz = 19.2 万点/秒（实车 MID-360 约 20 万点/秒）。
+  #   历史：
+  #     · 1875×32 @20 Hz = 120 万点/秒（实车 6 倍）→ Point-LIO 只有 2.6 Hz，导航崩；
+  #     · 300×32  @20 Hz = 19 万点/秒      → LIO 到 15 Hz，但单帧太稀、LIO 漂移大
+  #       （实测 odom 走 6.4 m 而真值只走 0.97 m → 净空校验失败、到点 ABORT）；
+  #     · 现在 600×32 @10 Hz：同样点率、单帧更密、频率贴近实车，LIO 匹配更稳。
+  #   **线数必须保 32**：削到 16 线会让地形图变稀，规划出现"目标全不可达"。
+  #   改这里必须同步改 nav2_params 里 ign_sim_pointcloud_tool 的 n_scan/horizon_scan。
+  update_rate: 10
+  samples: 600
   horizontal_min_angle: 0.0
   horizontal_max_angle: 6.2831852
   vertical_samples: 32

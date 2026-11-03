@@ -34,6 +34,10 @@
 #   否则多个节点会争抢 map->odom。
 #
 #   初始重定位 (GICP):
+#   ./script/start_sim_nav.sh                                    # 默认: Gazebo 真值里程计 (纯控制链路调试)
+#   ./script/start_sim_nav.sh --lio                              # 纯 Point-LIO 里程计 (最接近实车链路)
+#     --lio 与 --gicp 互斥: --lio 用 LIO 出 odom->base_link, map->odom 保持静态;
+#     --gicp 用 LIO + 先验点云重定位 (需要 PCD)。
 #     --gicp 会把定位方式切成 use_pcd_localization:=True + use_lio_odometry:=False:
 #       * 先验 PCD 由 --prior-pcd 给出, 可由 --prior-pcd-manifest 自动推出初值;
 #       * odom->base_link 交给 sensor_scan_generation (launch 会覆盖参数文件里的
@@ -73,6 +77,10 @@
 #                            但会校验两者不矛盾: 选错直接报错, 不让"名字是 MINCO、跑的是 Omni"溜过去。
 #       --minco             等价于 --controller minco
 #                            (--omni / -c omni 已随独立自转链一起删除, 见下)
+#       --lio / --no-lio         是否用 Point-LIO 出里程计 (**默认关闭** = Gazebo 真值)。
+#                                LIO 需要场景有几何结构: 空场(srm_empty)里 x/y 不可观, 会跑飞。
+#                                最接近实车: odom->base_link 由 sensor_scan_generation 从 LIO 反推,
+#                                点云会被 LIO 去畸变。与 --gicp 互斥。
 #       --gicp / --no-gicp       是否用 GICP 初始重定位 (默认关闭 = 原来的静态地图模式)
 #       --prior-pcd <绝对路径>   先验点云 PCD (--gicp 时必填)
 #       --prior-pcd-manifest <绝对路径>
@@ -109,6 +117,7 @@
 #   USE_GICP PRIOR_PCD_FILE PRIOR_PCD_MANIFEST INIT_POSE GICP_RUN_ID
 #   USE_VELOCITY_SMOOTHER YAW_MODE
 #   VERIFY_SPIN_WZ VERIFY_GOAL_DIST VERIFY_KEEP VERIFY_READY_TIMEOUT VERIFY_GOAL_TIMEOUT
+#   USE_LIO_ODOMETRY(0/1)
 #   OPEN_MODE(tab|window|direct) TERMINAL ROBOT_NS USE_COMPOSITION DRY_RUN SRM27_WS_DIR PREKILL
 #
 # 说明:
@@ -174,6 +183,9 @@ CONTROLLER_CLI_GIVEN=0
 
 # 初始重定位 (GICP)
 USE_GICP="${USE_GICP:-0}"                    # 1 = use_pcd_localization:=True
+# 默认 Gazebo 真值里程计；要用 Point-LIO 出里程计(最接近实车链路)显式加 --lio / USE_LIO_ODOMETRY=1。
+USE_LIO_ODOMETRY="${USE_LIO_ODOMETRY:-0}"    # 1 = use_lio_odometry:=True（Point-LIO 出里程计）
+LIO_CLI_GIVEN="${LIO_CLI_GIVEN:-0}"          # 1 = 命令行显式给过 --lio/--no-lio
 PRIOR_PCD_FILE="${PRIOR_PCD_FILE:-}"         # 先验点云 PCD 绝对路径
 PRIOR_PCD_MANIFEST="${PRIOR_PCD_MANIFEST:-}" # 先验点云清单 (可选, 用于推导 init_pose)
 PRIOR_PCD_SEARCH_DIRS="${PRIOR_PCD_SEARCH_DIRS:-}"  # 额外搜索目录 (冒号分隔)
@@ -204,6 +216,8 @@ while [ $# -gt 0 ]; do
                   exit 2 ;;
     --gicp)       USE_GICP="1"; shift ;;
     --no-gicp)    USE_GICP="0"; shift ;;
+    --lio)        USE_LIO_ODOMETRY="1"; LIO_CLI_GIVEN=1; shift ;;
+    --no-lio)     USE_LIO_ODOMETRY="0"; LIO_CLI_GIVEN=1; shift ;;
     --prior-pcd)          PRIOR_PCD_FILE="${2:?--prior-pcd 需要绝对路径}"; shift 2 ;;
     --prior-pcd-manifest) PRIOR_PCD_MANIFEST="${2:?--prior-pcd-manifest 需要绝对路径}"; shift 2 ;;
     --init-pose)          INIT_POSE="${2:?--init-pose 需要 x,y,z,roll,pitch,yaw}"; shift 2 ;;
@@ -357,6 +371,16 @@ if [ -f "$SIM_CONFIG" ]; then
   GZ_WORLD="${GZ_WORLD%\'}"; GZ_WORLD="${GZ_WORLD#\'}"
 fi
 
+read_spawn() {
+  python3 - "$SIM_CONFIG" "${1:-x}" <<'PYEOF'
+import sys
+import yaml
+cfg = yaml.safe_load(open(sys.argv[1], "r", encoding="utf-8"))
+print(cfg.get("robot", {}).get(sys.argv[2], ""))
+PYEOF
+}
+
+
 WORLD="${WORLD_FROM_USER:-${GZ_WORLD:-rmuc_2025}}"
 
 # 地图候选文件: map/simulation/*.yaml、maps/*.yaml、maps/<名字>/<名字>.yaml。
@@ -507,6 +531,18 @@ RUN_IMMEDIATELY="$(norm_switch "$RUN_IMMEDIATELY")"
 
 # ---------- 初始重定位 (GICP) 前置解析 ----------
 USE_GICP="$(norm_switch "${USE_GICP:-0}")"
+USE_LIO_ODOMETRY="$(norm_switch "${USE_LIO_ODOMETRY:-0}")"
+# map->odom 的平移/航向（真值模式下恒为 0；LIO 模式下 = 出生点）
+MAP2ODOM_X="${MAP2ODOM_X:-0}"; MAP2ODOM_Y="${MAP2ODOM_Y:-0}"; MAP2ODOM_YAW="${MAP2ODOM_YAW:-0}"
+if [ "$USE_GICP" = "true" ] && [ "$USE_LIO_ODOMETRY" = "true" ] && [ "$LIO_CLI_GIVEN" = "1" ]; then
+  echo "[错误] --gicp 与 --lio 互斥: --gicp 本身就用 LIO + 先验点云重定位。" >&2
+  echo "       想要纯 LIO 就只给 --lio; 想要重定位就只给 --gicp --prior-pcd <pcd>。" >&2
+  exit 2
+fi
+# 默认是 LIO，但 --gicp 自带 LIO 重定位：没有显式 --lio 时静默让位，不报错。
+if [ "$USE_GICP" = "true" ] && [ "$LIO_CLI_GIVEN" != "1" ]; then
+  USE_LIO_ODOMETRY="0"
+fi
 NAV_EXTRA_ARGS=""
 
 # 先验 PCD: 接受绝对路径, 或文件名(在若干常用目录里找)
@@ -546,6 +582,27 @@ if [ "$USE_GICP" = "true" ]; then
   fi
 else
   NAV_EXTRA_ARGS=" use_pcd_localization:=False"
+  if [ "$USE_LIO_ODOMETRY" = "true" ]; then
+    # 空场世界只有地面(平面)，点云在 x/y 上不可观：LIO 只能靠 IMU 推算，必然漂 → 会"跑飞"。
+    if [ "$WORLD" = "srm_empty" ]; then
+      echo "[警告] -w srm_empty 是空场世界(只有地面，没有任何墙面/障碍)。" >&2
+      echo "       Point-LIO 在这种场景下 x/y 不可观，位姿只能靠 IMU 推算，很快就会漂，" >&2
+      echo "       表现为导航'跑飞'、净空/轨迹校验失败、到点 ABORT。建议二选一：" >&2
+      echo "         · 换有结构的世界(如 -w rmuc_2025 -m rmuc_2025)再跑 LIO；" >&2
+      echo "         · 或加 --no-lio 用真值里程计做控制/决策验收。" >&2
+      [ "${ALLOW_LIO_EMPTY_WORLD:-0}" = "1" ] || { echo "[退出] 如确认要这么跑，加 ALLOW_LIO_EMPTY_WORLD=1。" >&2; exit 2; }
+    fi
+    # 纯 LIO：odom->base_link 由 sensor_scan_generation 从 Point-LIO 反推。
+    # ⚠ LIO 的 odom 原点 = 出生点（不是地图原点），而 map->odom 在本链路是静态发布，
+    #   所以必须把它设成**出生点在地图里的位姿**，否则机器人会被投影到离真实位置
+    #   一个出生点远的地方（默认真值模式下出生点是 (3.4, 9.5)，错位 10 m 后
+    #   净空/规划全废：实测 minimum_clearance=0.349 < 0.38 → validation_failed → ABORT）。
+    # 地图是以**出生点为原点**建的（GT 模式 map≡odom 才能正常导航），而 LIO 的 odom
+    # 原点同样是出生点 → 所以 map->odom 必须保持恒等，**不要**加出生点偏移。
+    NAV_EXTRA_ARGS="$NAV_EXTRA_ARGS use_lio_odometry:=True"
+  else
+    NAV_EXTRA_ARGS="$NAV_EXTRA_ARGS use_lio_odometry:=False"
+  fi
 fi
 
 # ---------- GICP: 由建图清单推导 map->odom 初值 ----------
@@ -555,14 +612,6 @@ fi
 # odom 与地图在出生点同原点, 因此建图起点 == 出生点 时上面结果就是恒等矩阵;
 # 两者不同原点时, 这个式子正好给出让机器人出现在正确位置所需的初值。
 if [ "$USE_GICP" = "true" ]; then
-  read_spawn() {
-    python3 - "$SIM_CONFIG" "${1:-x}" <<'PYEOF'
-import sys
-import yaml
-cfg = yaml.safe_load(open(sys.argv[1], "r", encoding="utf-8"))
-print(cfg.get("robot", {}).get(sys.argv[2], ""))
-PYEOF
-  }
   SPAWN_X="$(read_spawn x)"; SPAWN_Y="$(read_spawn y)"; SPAWN_YAW="$(read_spawn yaw)"
 
   if [ -n "$PRIOR_PCD_MANIFEST" ] && [ -f "$PRIOR_PCD_MANIFEST" ]; then
@@ -769,8 +818,14 @@ if [ "$USE_GICP" = "true" ]; then
   [ -n "$PRIOR_PCD_MANIFEST" ] && printf '点云清单  : %s\n' "$PRIOR_PCD_MANIFEST"
   printf 'map->odom 初值: [%s]\n' "$INIT_POSE"
   printf '试验编号  : %s (写入逐次诊断 run_id)\n' "$GICP_RUN_ID"
+elif [ "$USE_LIO_ODOMETRY" = "true" ]; then
+  printf '定位方式  : Point-LIO 里程计 (slam:=False, use_pcd_localization:=False, use_lio_odometry:=True)\n'
+  printf '            odom->base_link = sensor_scan_generation 从 LIO 反推; map->odom 静态\n'
+  printf '            点云由 LIO 去畸变; 底盘 yaw = LIO 传感器 yaw − 云台角(经 TF)\n'
+  printf '对照源    : /%s/chassis_odometry_gt (Gazebo 真值, 仿真的"下位机 yaw")\n' "$ROBOT_NS"
 else
-  printf '定位方式  : 静态地图 + 仿真真值里程计 (slam:=False, use_pcd_localization:=False)\n'
+  printf '定位方式  : 静态地图 + 仿真真值里程计 (slam:=False, use_pcd_localization:=False, use_lio_odometry:=False)\n'
+  printf '            默认值; 需要 LIO 加 --lio (最接近实车, 但要有几何结构的世界)\n'
 fi
 printf 'RViz      : %s    Gazebo GUI: %s    直接运行: %s\n' "$USE_RVIZ" "$USE_GUI" "$RUN_IMMEDIATELY"
 printf '平滑器    : %s\n' "$USE_VELOCITY_SMOOTHER"
@@ -1035,13 +1090,15 @@ if [ "$VERIFY_SPIN" = "1" ]; then
 
   echo "[验证] 发自转请求 + 下发导航目标，开始断言（最长 ${VERIFY_GOAL_TIMEOUT}s）..."
   set +e
-  python3 - "$ROBOT_NS" "$VERIFY_SPIN_WZ" "$VERIFY_GOAL_DIST" "$VERIFY_GOAL_TIMEOUT" <<'PYCHECK'
+  python3 - "$ROBOT_NS" "$VERIFY_SPIN_WZ" "$VERIFY_GOAL_DIST" "$VERIFY_GOAL_TIMEOUT" \
+  "$MAP2ODOM_X" "$MAP2ODOM_Y" "$MAP2ODOM_YAW" <<'PYCHECK'
 import math
 import sys
 import threading
 import time
 
 import rclpy
+import tf2_ros
 from geometry_msgs.msg import Twist
 from nav2_msgs.action import ComputePathToPose, NavigateToPose
 from nav_msgs.msg import Odometry
@@ -1050,6 +1107,10 @@ from rclpy.node import Node
 
 NS, SPIN_WZ, GOAL_DIST, GOAL_TIMEOUT = (
     sys.argv[1], float(sys.argv[2]), float(sys.argv[3]), float(sys.argv[4])
+)
+# 真值模式恒为 0；LIO 模式下 odom 原点在出生点，所以 map 位姿 = odom 位姿 + 该偏移。
+MAP2ODOM_X, MAP2ODOM_Y, MAP2ODOM_YAW = (
+    float(sys.argv[5]), float(sys.argv[6]), float(sys.argv[7])
 )
 
 
@@ -1084,6 +1145,10 @@ class Sampler(Node):
 
     def __init__(self):
         super().__init__("verify_spin_nav")
+        # LIO 模式下 odom 原点在出生点、map->odom 不为恒等，所以发目标前必须把
+        # odom 位姿换算到 map 系，否则目标会落在离车一个出生点远的地方（全不可达）。
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         self.lock = threading.Lock()
         self.samples = {"fake": [], "body": [], "sim": [], "odom_wz": []}
         self.odom_pose = None
@@ -1180,7 +1245,14 @@ if pose is None:
     sys.exit(1)
 
 x0, y0, yaw0 = pose
-print("  起点 (map=odom 系): (%.2f, %.2f, yaw %+.2f)" % (x0, y0, yaw0))
+# 换到 map 系（目标必须用 map 系下发）；LIO 模式下 map->odom 是出生点偏移。
+cos_off, sin_off = math.cos(MAP2ODOM_YAW), math.sin(MAP2ODOM_YAW)
+x_odom, y_odom = x0, y0
+x0 = MAP2ODOM_X + cos_off * x_odom - sin_off * y_odom
+y0 = MAP2ODOM_Y + sin_off * x_odom + cos_off * y_odom
+yaw0 = wrap(yaw0 + MAP2ODOM_YAW)
+print("  起点 (map 系): (%.2f, %.2f, yaw %+.2f)   [map->odom 偏移 x=%.2f y=%.2f yaw=%+.2f]"
+      % (x0, y0, yaw0, MAP2ODOM_X, MAP2ODOM_Y, MAP2ODOM_YAW))
 
 client = ActionClient(node, NavigateToPose, topic("navigate_to_pose"))
 if not client.wait_for_server(timeout_sec=15.0):

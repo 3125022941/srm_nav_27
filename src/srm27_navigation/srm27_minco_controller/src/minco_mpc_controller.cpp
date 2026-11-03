@@ -1131,21 +1131,29 @@ bool MincoMpcController::updateRecovery(
     /*_log_transitions=*/recovery_command_count_ == 0);
 
   if (exit != srm27_minco_core::RecoveryExit::kNone) {
+    // 本会话实际输出的周期数必须在 `leaveRecovery()` **之前**取下来。
+    //
+    // 原来这里直接打印 `recovery_command_count_`，而 `leaveRecovery()` 会把该成员
+    // 清零（它的职责之一就是"本次会话到此结束"），于是那两行日志里的
+    // "输出 %lu 个周期" **永远是 0** —— 现场据此会误判成"进了脱困但没推车"，
+    // `docs/minco脱困机制迁移实施记录(ai).md` §7 与 `start_sim_nav.sh` 自检清单里
+    // "recovery_command_count 从 0 变非 0 才说明真的输出了逃逸速度"这条验收方法
+    // 也跟着整体失效（只看日志的话）。
+    // 2026-11-03 实测：4 次脱困净空都从 0.33 涨到 0.50（确实推了车），日志却全是 0。
+    const unsigned long session_cycles = static_cast<unsigned long>(recovery_command_count_);
     leaveRecovery(srm27_minco_core::toString(exit), _now_stamp);
     if (exit == srm27_minco_core::RecoveryExit::kEscaped) {
       RCLCPP_INFO(
         _node->get_logger(),
         "MincoMpcController: 脱困成功（净空 %.3f m > %.2f m，用时 %.2f s，输出 %lu 个周期）",
         clearance, recovery_escaped_clearance_,
-        _now_stamp - recovery_decider_.lastRecoveryStartSec(),
-        static_cast<unsigned long>(recovery_command_count_));
+        _now_stamp - recovery_decider_.lastRecoveryStartSec(), session_cycles);
     } else {
       RCLCPP_WARN(
         _node->get_logger(),
         "MincoMpcController: 脱困超时（%.2f s 窗口内净空只到 %.3f m，成功阈值 %.2f m，"
         "输出 %lu 个周期），返回重规划；若仍失败将由建轨宽限抛给行为树兜底",
-        recovery_window_sec_, clearance, recovery_escaped_clearance_,
-        static_cast<unsigned long>(recovery_command_count_));
+        recovery_window_sec_, clearance, recovery_escaped_clearance_, session_cycles);
     }
     // 本周期不接管：让正常链路（重规划请求 / 建轨宽限 / BT）立刻接手，
     // 避免"脱困已结束但本周期还在推车"的多推一个周期。
