@@ -1222,9 +1222,13 @@ MINCO 脱困自检 (实车; 与仿真同源但多了"车真的会动"这一层�
      RViz 里已预置显示项 "Recovery (MINCO)" (共用 nav2_default_view.rviz):
        绿线 = 脱困路径规划结果, 蓝箭头 = 本周期下发的那一步, 球 = 当前净空。
   c) 观察脱困状态 (只筛脱困字段, 不刷屏):
-       ros2 topic echo /FollowPath/diagnostics | grep -E "recovery_(active|trigger|exit|command_count|stale_abort)"
+       ros2 topic echo /FollowPath/diagnostics | grep -E "recovery_(active|trigger|exit|command_count|stale_abort|repeat_suppressed)"
      验收看 **recovery_command_count**: 它从 0 变成非 0 才说明脱困**真的输出了逃逸速度**。
      只看到 recovery_active=true 而 command_count 一直是 0, 等于"进了脱困但没推车"。
+     (日志里那行"输出 N 个周期"2026-11-03 之前永远打 0 —— leaveRecovery() 先把计数清零
+      再打印, 已修; 修之前只能看这个话题。)
+     **recovery_repeat_suppressed_count** 增长而 enter_count 不增长 = 判为"原地来回荡",
+     脱困被刻意跳过 (窄带里推不出来), 此时该查通道宽度/机器人半径。
   d) 实测脱困速度到没到底盘 (脱困期间在另一个终端跑):
        ros2 topic echo /cmd_vel_chassis
      脱困期间应看到**恒定**的 vx/vy (合速度约 escape_speed × 串口 linear_velocity_scale),

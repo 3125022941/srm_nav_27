@@ -1002,9 +1002,15 @@ MINCO 脱困自检 (脱困判定 / 脱困路径规划 / 脱困成功判定):
      RViz 里已预置显示项 "Recovery (MINCO)", 不用手动加:
        绿线 = 脱困路径规划结果, 蓝箭头 = 本周期下发的那一步, 球 = 当前净空。
   c) 实时看脱困状态 (只筛脱困字段, 不刷屏):
-       ros2 topic echo /${ROBOT_NS}/FollowPath/diagnostics | grep -E "recovery_(active|trigger|exit|clearance)"
+       ros2 topic echo /${ROBOT_NS}/FollowPath/diagnostics | grep -E "recovery_(active|trigger|exit|clearance|command_count|repeat_suppressed)"
      正常导航 recovery_active=false; 进脱困为 true 且 recovery_trigger=gradient|circular_search;
      退出时 recovery_exit=escaped|timeout。
+     两条"看得懂"的辅助判据:
+       * recovery_command_count 非 0 才算真的推了车 (日志里的"输出 N 个周期"已修正,
+         2026-11-03 之前那行永远打 0, 是因为 leaveRecovery() 先把计数清零再打印);
+       * recovery_repeat_suppressed_count 增长而 recovery_enter_count 不增长 = 车被夹在
+         "推得动一点但推不出困境"的窄带里, 脱困对它没用 —— 该查通道宽度/机器人半径,
+         而不是继续调脱困参数。
   d) 怎么把它逼进脱困 (两个条件必须同时成立, 最容易白等的地方):
        条件 1: 重规划连续失败 fail_threshold(5) 次;
        条件 2: 机器人自身净空 < stuck_clearance(0.25 m)。

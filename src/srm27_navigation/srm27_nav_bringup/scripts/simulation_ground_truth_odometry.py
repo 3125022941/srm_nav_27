@@ -57,6 +57,13 @@ from srm_nav_pose_math import (  # noqa: E402 - 必须在 sys.path 调整之后�
 POSITION_JITTER_THRESHOLD = 0.002
 YAW_JITTER_THRESHOLD = 0.002
 
+# twist 与位姿的一致性闸门（见 `_twist_is_trustworthy` 的说明）。
+# 判据：位姿在最近 TWIST_STATIC_WINDOW_NS 内几乎没动（< TWIST_STATIC_DISPLACEMENT），
+# 就认为车真的停住了，把转发的 twist 清零。
+TWIST_STATIC_WINDOW_NS = 250_000_000
+TWIST_STATIC_DISPLACEMENT = 0.010
+TWIST_STATIC_YAW = 0.030
+
 
 def load_lidar_extrinsic():
     """从 srm27_robot_description 的几何 YAML 读取 base_link -> 雷达外参。
@@ -114,6 +121,9 @@ class SimulationGroundTruthOdometry(Node):
         self.last_callback_time = None
         self.latest_message = None
         self.filtered_pose = None
+        # 一致性闸门的基准：(x, y, yaw, monotonic_ns)
+        self.motion_reference = None
+        self.twist_trusted = True
         self.publish_period_ns = 20_000_000  # 50 Hz is sufficient for Nav2.
         self.tf_broadcaster = TransformBroadcaster(self)
         self.odom_publisher = self.create_publisher(Odometry, "odometry", 10)
@@ -234,6 +244,19 @@ class SimulationGroundTruthOdometry(Node):
             odometry.twist.twist.linear.y = 0.0
         if abs(odometry.twist.twist.angular.z) < 0.002:
             odometry.twist.twist.angular.z = 0.0
+        # 一致性闸门：**以位姿为准**。位姿在最近 0.25 s 内几乎没动，就把转发的 twist 清零。
+        #
+        # 为什么必须加：Gazebo 转发过来的 twist 在车完全静止时会停在某个非零值上
+        # （2026-11-03 实测恒为 (-0.061, 0.022) m/s，而同期的位姿 3 s 只爬了 4e-5 m，
+        # 两者差 100 倍）。这个假速度会让 Nav2 的 StoppedGoalChecker 永远判不了"停稳"：
+        # 车停在距末点 0.366 m（在 0.5 m 容差内）、控制器已进入终点急停输出零速，但目标
+        # 检查器不接受 → 进度检查器每 10 s 判一次失败 → 清图重发目标 → 再急停，
+        # 实测 8 分钟刷了 46 次、始终到不了点。它还会让 MPC 去"消掉一个不存在的速度"。
+        # 闸门只做一件事：位姿说停住了，就不许 twist 说还在动 —— 不会凭空造速度。
+        if not self._twist_is_trustworthy(base_pose, publish_time_ns):
+            odometry.twist.twist.linear.x = 0.0
+            odometry.twist.twist.linear.y = 0.0
+            odometry.twist.twist.angular.z = 0.0
         self.odom_publisher.publish(odometry)
 
         # sensor_scan_generation consumes a lidar pose together with the cloud.
@@ -287,6 +310,38 @@ class SimulationGroundTruthOdometry(Node):
             (translation.x, translation.y, translation.z),
             (rotation.x, rotation.y, rotation.z, rotation.w),
         )
+
+    def _twist_is_trustworthy(self, pose, now_ns):
+        """位姿在最近一个窗口内是否"确实在动"；不动则转发的 twist 不可信。
+
+        只有位姿在 ``TWIST_STATIC_WINDOW_NS`` 内发生过 ``TWIST_STATIC_DISPLACEMENT``
+        以上的平移（或 ``TWIST_STATIC_YAW`` 以上的转向）时才返回 True。判据用**滤波后**
+        的位姿（``_suppress_jitter`` 的输出），所以阈值必须大于
+        ``POSITION_JITTER_THRESHOLD``(0.002)，否则静止抖动会不断刷新基准、闸门永远不生效。
+
+        使用 0.25 s 窗口而不是逐帧差分：逐帧差分会被单帧噪声放大，而 0.25 s 内移动
+        1 cm 等价于平均 0.04 m/s —— 低于这个速度的蠕动本来也不需要被 Nav2 看到。
+        """
+        position, orientation = pose
+        x = position[0]
+        y = position[1]
+        yaw = yaw_from_quaternion(orientation)
+        if self.motion_reference is None:
+            self.motion_reference = (x, y, yaw, now_ns)
+            return True  # 还没有基准，先不动手
+        ref_x, ref_y, ref_yaw, ref_ns = self.motion_reference
+        if now_ns - ref_ns < TWIST_STATIC_WINDOW_NS:
+            # 窗口还没攒够：沿用上一次的结论（基准不动）。
+            return getattr(self, "twist_trusted", True)
+        moved = math.hypot(x - ref_x, y - ref_y)
+        turned = abs(normalize_angle(yaw - ref_yaw))
+        if moved >= TWIST_STATIC_DISPLACEMENT or turned >= TWIST_STATIC_YAW:
+            self.motion_reference = (x, y, yaw, now_ns)
+            self.twist_trusted = True
+            return True
+        # 窗口内几乎没动：不动基准（否则永远攒不满），下一周期仍然判"静止"。
+        self.twist_trusted = False
+        return False
 
     def _suppress_jitter(self, pose):
         """静止时保持亚阈值抖动，同时不吞掉累积运动。

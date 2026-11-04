@@ -215,10 +215,12 @@ void MincoMpcController::configure(
     node->get_logger(),
     "MincoMpcController 脱困参数: fail_threshold=%d cooldown=%.2f s window=%.2f s "
     "escape_speed=%.2f m/s stuck_clearance=%.2f m escaped_clearance=%.2f m "
-    "search=radius %.2f m/%d samples",
+    "search=radius %.2f m/%d samples repeat_guard=%.2f m/%.0f deg",
     recovery_fail_threshold_, recovery_cooldown_sec_, recovery_window_sec_,
     recovery_escape_speed_, recovery_stuck_clearance_, recovery_escaped_clearance_,
-    recovery_search_radius_, recovery_search_samples_);
+    recovery_search_radius_, recovery_search_samples_,
+    recovery_decider_.config().repeat_guard_radius,
+    recovery_decider_.config().repeat_guard_angle_deg);
 }
 
 bool MincoMpcController::loadParameters(std::string * _reason)
@@ -350,6 +352,9 @@ bool MincoMpcController::loadParameters(std::string * _reason)
   declare("recovery.escaped_clearance", 0.40);
   declare("recovery.search_radius", 0.4);
   declare("recovery.search_samples", 36);
+  // 重复进入抑制：判定"原地来回荡"而不是"被卡住"，见 RecoveryDecision::kRepeatSuppressed。
+  declare("recovery.repeat_guard_radius", 0.35);
+  declare("recovery.repeat_guard_angle_deg", 120.0);
   declare("recovery.publish_visualization", true);
 
   node->get_parameter(name + ".planning_frame", planning_frame_);
@@ -469,6 +474,9 @@ bool MincoMpcController::loadParameters(std::string * _reason)
     node->get_parameter(name + ".recovery.escaped_clearance", recovery_config.escaped_clearance);
     node->get_parameter(name + ".recovery.search_radius", recovery_config.search_radius);
     node->get_parameter(name + ".recovery.search_samples", recovery_config.search_samples);
+    node->get_parameter(name + ".recovery.repeat_guard_radius", recovery_config.repeat_guard_radius);
+    node->get_parameter(
+      name + ".recovery.repeat_guard_angle_deg", recovery_config.repeat_guard_angle_deg);
     recovery_decider_.configure(recovery_config);
     // 把夹取后的值回写到成员，供 `handlePlanningFailure` 的分诊判定与日志使用，
     // 避免"日志里打印的阈值"和"实际生效的阈值"不是同一个数。
@@ -982,6 +990,8 @@ bool MincoMpcController::handlePlanningFailure(const State2D & _state, double _n
   diagnostics_.recovery_active = recovery_decider_.isRecovering();
   diagnostics_.recovery_failures = recovery_decider_.consecutiveFailures();
   diagnostics_.recovery_exit = recovery_decider_.lastExit();
+  diagnostics_.recovery_repeat_suppressed_count =
+    recovery_decider_.repeatSuppressedCount();
 
   // 已经在脱困里：本周期该由 `updateRecovery` 推进，不能再累加失败或重新决策。
   if (recovery_decider_.isRecovering()) {
@@ -1016,6 +1026,28 @@ bool MincoMpcController::handlePlanningFailure(const State2D & _state, double _n
       "MincoMpcController: 卡死 (净空 %.3f m < %.2f m) 但距离场给不出逃逸方向，"
       "保持原状态继续重试（不作脱困、不抛异常）",
       clearance, recovery_stuck_clearance_);
+    return false;
+  }
+  if (decision == srm27_minco_core::RecoveryDecision::kRepeatSuppressed) {
+    // 上一次脱困就在附近结束，而这次要往几乎相反的方向逃 —— 车是在窄带里原地来回荡，
+    // 不是被卡住。继续按 escape_speed 盲推只会把位置荡来荡去，正确的处置是**放弃这次
+    // 脱困**，让重规划继续尝试；一直失败就由建轨宽限抛给行为树的 backup（那一层会用
+    // 一次 0.3~1.0 m 的平移真正改变局面，回来之后本判据自然失效）。
+    diagnostics_.recovery_trigger = "repeat_suppressed";
+    diagnostics_.recovery_repeat_suppressed_count =
+      recovery_decider_.repeatSuppressedCount();
+    RCLCPP_WARN_THROTTLE(
+      (parent_.lock())->get_logger(), *(parent_.lock())->get_clock(), 2000,
+      "MincoMpcController: 抑制重复脱困（净空 %.3f m < %.2f m；候选方向 %.1f deg 与上次会话"
+      "方向夹角 >= %.0f deg，且距上次结束点 < %.2f m）—— 判为原地来回荡，交回重规划；"
+      "累计已抑制 %lu 次",
+      clearance, recovery_stuck_clearance_,
+      std::atan2(
+        recovery_decider_.lastEscapeDirection().y(),
+        recovery_decider_.lastEscapeDirection().x()) * 180.0 / M_PI,
+      recovery_decider_.config().repeat_guard_angle_deg,
+      recovery_decider_.config().repeat_guard_radius,
+      static_cast<unsigned long>(recovery_decider_.repeatSuppressedCount()));
     return false;
   }
 

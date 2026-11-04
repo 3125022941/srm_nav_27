@@ -150,6 +150,9 @@ diagnostic_msgs::msg::DiagnosticArray toDiagnosticArray(
   addCount(values, "recovery_enter_count", _diagnostics.recovery_enter_count);
   addCount(values, "recovery_command_count", _diagnostics.recovery_command_count);
   addCount(values, "recovery_stale_abort_count", _diagnostics.recovery_stale_abort_count);
+  addCount(
+    values, "recovery_repeat_suppressed_count",
+    _diagnostics.recovery_repeat_suppressed_count);
   addNumber(values, "recovery_entry_clearance", _diagnostics.recovery_entry_clearance);
   addNumber(values, "recovery_clearance", _diagnostics.recovery_clearance);
   addNumber(values, "recovery_direction_x", _diagnostics.recovery_direction_x);

@@ -128,12 +128,18 @@ struct ControllerDiagnostics
   std::uint64_t recovery_enter_count{0};
   /// \brief 本次脱困已输出的控制周期数。
   std::uint64_t recovery_command_count{0};
-  /// \brief 进入脱困的原因：`gradient` / `circular_search` / `no_escape_direction`。
+  /// \brief 进入脱困的原因：`gradient` / `circular_search` / `no_escape_direction`；
+  /// 因"原地来回荡"被抑制时为 `repeat_suppressed`（此时并未真正进入脱困）。
   std::string recovery_trigger{"none"};
   /// \brief 退出脱困的原因：`escaped` / `timeout` / `stale_gap` / `new_goal` / `none`。
   std::string recovery_exit{"none"};
   /// \brief 因"两帧控制间隔异常大（中间目标被取消过）"而作废脱困会话的累计次数。
   std::uint64_t recovery_stale_abort_count{0};
+  /// \brief 因"同处反向重复进入（原地来回荡）"而被抑制掉的脱困次数。
+  ///
+  /// 该值增长而 `recovery_enter_count` 不增长，说明车被夹在窄带里、脱困对它没用 ——
+  /// 那时该查的是路径 / 通道宽度（`robot_radius`、膨胀层），而不是继续调脱困参数。
+  std::uint64_t recovery_repeat_suppressed_count{0};
   /// \brief 进入脱困时自身净空（m）。
   double recovery_entry_clearance{-1.0};
   /// \brief 进入脱困时的自身净空（m）；与 entry 同源，便于现场直接看阈值关系。
