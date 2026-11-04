@@ -352,6 +352,25 @@ def generate_launch_description():
         remappings=[("/tf", "tf"), ("/tf_static", "tf_static")],
     )
 
+    # 3.5) LIO 模式专属：云台自转门控（等 Point-LIO 稳定后才开始转）。
+    # 真值里程计模式不需要它 —— 那时转速由 SDF 直接交给仿真插件，起来就转。
+    start_gimbal_spin_gate = Node(
+        # IfCondition 接受 'True'/'true'/'1'，与脚本传入的写法兼容。
+        condition=IfCondition(use_lio_odometry),
+        package="srm27_nav_bringup",
+        executable="gimbal_spin_gate.py",
+        name="gimbal_spin_gate",
+        output="screen",
+        namespace=namespace,
+        parameters=[
+            {"use_sim_time": use_sim_time},
+            {"spin_rate": gimbal_rate_arg},
+            {"odometry_topic": "lidar_odometry"},
+            {"command_topic": "cmd_gimbal_vel"},
+        ],
+        remappings=[("/tf", "tf"), ("/tf_static", "tf_static")],
+    )
+
     # 4) Nav2 栈：参数与速度出口都指向 SRM 版本
     bringup_cmd = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(launch_dir, "nav2_stack_launch.py")),
@@ -654,6 +673,7 @@ def generate_launch_description():
     ld.add_action(simulation_cmd)
     ld.add_action(start_velodyne_convert_tool)
     ld.add_action(start_simulation_odometry)
+    ld.add_action(start_gimbal_spin_gate)
     ld.add_action(bringup_cmd)
     ld.add_action(chassis_control_cmd)
     ld.add_action(rviz_cmd)

@@ -116,9 +116,17 @@ def _launch_setup(context):
     gimbal_spin_rate = float(
         LaunchConfiguration("gimbal_spin_rate").perform(context) or 2.0
     )
+    gimbal_driver = LaunchConfiguration("gimbal_driver").perform(context) or "system"
+    if gimbal_driver not in ("system", "external"):
+        raise RuntimeError(f"gimbal_driver 只能是 system/external，收到 {gimbal_driver!r}")
     # 打印生效的云台转速：这条日志是"云台为什么转/不转"的第一现场证据。
     from launch.actions import LogInfo  # noqa: PLC0415 - 与文件内其它 import 风格一致
-    if abs(gimbal_spin_rate) > 0.0:
+    if gimbal_driver == "external":
+        gimbal_note = (
+            f"云台转速交给外部命令（LIO 模式）：gimbal_spin_gate 会在 Point-LIO 稳定后"
+            f"按 {gimbal_spin_rate} rad/s 启动，之前保持锁定"
+        )
+    elif abs(gimbal_spin_rate) > 0.0:
         gimbal_note = f"云台匀速自转 {gimbal_spin_rate} rad/s（仿真器直接施加，雷达随之转动）"
     else:
         gimbal_note = "云台锁定（转速 0）：不会自转，只跟随底盘"
@@ -128,6 +136,7 @@ def _launch_setup(context):
         odometry_topic=velocity["odom_topic"],
         command_timeout=float(velocity["command_timeout"]),
         gimbal_spin_rate=gimbal_spin_rate,
+        gimbal_driver=gimbal_driver,
     )
     robot_urdf = build_urdf()
 
@@ -252,6 +261,15 @@ def generate_launch_description():
                 "config_file",
                 default_value=os.path.join(pkg_share, "config", "srm_sim.yaml"),
                 description="仿真入口配置（世界、初始位姿与速度参数）",
+            ),
+            DeclareLaunchArgument(
+                "gimbal_driver",
+                default_value="system",
+                description=(
+                    "云台转速由谁决定：system=仿真插件按 gimbal_spin_rate 直接驱动（默认）；"
+                    "external=不驱动，改由 ROS 话题 /cmd_gimbal_vel + gz JointController 控制"
+                    "（LIO 模式用，由 gimbal_spin_gate 在 Point-LIO 稳定后才发）"
+                ),
             ),
             DeclareLaunchArgument(
                 "gimbal_spin_rate",

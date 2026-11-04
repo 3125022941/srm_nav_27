@@ -417,11 +417,19 @@ def build_sdf(
     odometry_topic="odometry",
     command_timeout=0.1,
     gimbal_spin_rate=0.0,
+    gimbal_driver="system",
 ):
     """生成供 Gazebo Fortress 加载的完整 SRM 模型 SDF 文本。
 
     ``velocity_topic`` / ``odometry_topic`` 为相对话题名，Gazebo Transport 会
     自动加上模型名前缀，例如 ``<model>/cmd_vel`` 与 ``<model>/odometry``。
+
+    ``gimbal_driver``：云台转速由谁决定。
+      * ``system``（默认）：SrmVelocitySystem 每步直接写关节角速度，等于``gimbal_spin_rate``
+        的恒定值；0 = 锁定。适合真值里程计模式。
+      * ``external``：SrmVelocitySystem **不碰**云台关节，改由 gz 的 JointController
+        接收 ROS 话题 ``/<ns>/cmd_gimbal_vel``（经 bridge）来驱动，初始 0。适合 LIO 模式：
+        由 gimbal_spin_gate 节点在 LIO 初始化完成后才开始发转速。
 
     ``gimbal_spin_rate``：云台匀速自转角速度（rad/s，负值反向；0 = 不转）。
     由 ``SrmVelocitySystem`` 每个物理步直接施加，**不经过任何 ROS 话题/桥接**，
@@ -449,14 +457,32 @@ def build_sdf(
     # initial_velocity=0 => 不收到命令就静止，改动对既有用法零影响。
     # 云台自转由**自有速度插件**直接施加（不再挂 gz 的 JointController）：
     # 单一所有者、不依赖 ROS 命令与桥接，小陀螺时仿真器自己就能让它匀速转。
+    gimbal_external = gimbal_driver == "external"
+    if gimbal_external and not yaw_is_movable(config):
+        raise ValueError("gimbal_driver=external 需要 yaw_envelope.movable 为 true")
     if yaw_is_movable(config):
         yaw_joint = f"{yaw_link_name(config)}_joint"
         yaw_driver_plugin = (
             f"\n      <gimbal_joint>{yaw_joint}</gimbal_joint>"
-            f"\n      <gimbal_spin_rate>{float(gimbal_spin_rate)!r}</gimbal_spin_rate>"
+            f"\n      <gimbal_spin_rate>"
+            f"{0.0 if gimbal_external else float(gimbal_spin_rate)!r}</gimbal_spin_rate>"
+            f"\n      <gimbal_external_driver>"
+            f"{'true' if gimbal_external else 'false'}</gimbal_external_driver>"
+        )
+        yaw_external_plugin = (
+            f"""
+    <!-- external 驱动：云台转速由 ROS 话题 /<ns>/cmd_gimbal_vel 经 bridge 指定，
+         初始 0（不转）。LIO 模式下由 gimbal_spin_gate 在初始化完成后才开始发。 -->
+    <plugin filename="ignition-gazebo-joint-controller-system"
+            name="ignition::gazebo::systems::JointController">
+      <joint_name>{yaw_joint}</joint_name>
+      <initial_velocity>0.0</initial_velocity>
+    </plugin>"""
+            if gimbal_external else ""
         )
     else:
         yaw_driver_plugin = ""
+        yaw_external_plugin = ""
     # 底盘的旋转标记（红）：刻线只画在云台外面的那圈顶面上，免得和云台圆柱打架。
     yaw_radius = float((config.get("yaw_envelope") or {}).get("radius", 0.150))
     chassis_marks = _rotation_marks_sdf(
@@ -632,7 +658,7 @@ def build_sdf(
     </link>
 
     <plugin filename="ignition-gazebo-joint-state-publisher-system"
-            name="ignition::gazebo::systems::JointStatePublisher"/>
+            name="ignition::gazebo::systems::JointStatePublisher"/>{yaw_external_plugin}
     <plugin filename="{plugin_library}" name="{plugin_name}">
       <chassis_link>{base_link}</chassis_link>
       <command_topic>{velocity_topic}</command_topic>

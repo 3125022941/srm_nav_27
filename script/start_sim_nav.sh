@@ -176,6 +176,8 @@ YAW_MODE="${YAW_MODE:-auto}"
 # 云台自转角速度 (rad/s)：留空 = 按航向策略自动决定（spin -> 2.0，其它 -> 0）。
 # 由仿真器 SrmVelocitySystem 直接施加，不经 ROS 话题/桥接；负值 = 反向。
 GIMBAL_SPIN_WZ="${GIMBAL_SPIN_WZ:-}"
+if [ -n "$GIMBAL_SPIN_WZ" ]; then GIMBAL_SPIN_GIVEN=1; fi
+GIMBAL_SPIN_GIVEN="${GIMBAL_SPIN_GIVEN:-0}"   # 1 = 用户显式指定过（含环境变量）
 
 # 自定义 RViz 配置（留空 = 用包内 rviz/nav2_default_view.rviz；--rviz-config 覆盖）
 RVIZ_CONFIG="${RVIZ_CONFIG:-}"
@@ -239,8 +241,8 @@ while [ $# -gt 0 ]; do
     --smoother)   USE_VELOCITY_SMOOTHER="True"; shift ;;
     --no-smoother) USE_VELOCITY_SMOOTHER="False"; shift ;;
     --yaw-mode)   YAW_MODE="${2:?--yaw-mode 需要 auto|se2|spin}"; shift 2 ;;
-    --gimbal-spin) GIMBAL_SPIN_WZ="${2:?--gimbal-spin 需要 rad/s 数值}"; shift 2 ;;
-    --no-gimbal-spin) GIMBAL_SPIN_WZ="0"; shift ;;
+    --gimbal-spin) GIMBAL_SPIN_WZ="${2:?--gimbal-spin 需要 rad/s 数值}"; GIMBAL_SPIN_GIVEN=1; shift 2 ;;
+    --no-gimbal-spin) GIMBAL_SPIN_WZ="0"; GIMBAL_SPIN_GIVEN=1; shift ;;
     --verify-spin) VERIFY_SPIN=1; YAW_MODE="spin"; shift ;;
     -h|--help)    usage; exit 0 ;;
     *) echo "[错误] 未知参数: $1 (用 -h 查看用法)" >&2; exit 2 ;;
@@ -562,6 +564,22 @@ fi
 if [ "$USE_GICP" = "true" ] && [ "$LIO_CLI_GIVEN" != "1" ]; then
   USE_LIO_ODOMETRY="0"
 fi
+
+# ---------- 云台驱动方式：谁来让云台转 ----------
+# system  = 仿真插件按 gimbal_spin_rate 直接驱动（真值里程计模式，起来就转）
+# external = 插件不驱动，改由 ROS 话题 + gz JointController；LIO 模式下由
+#            gimbal_spin_gate 等 Point-LIO 初始化稳定之后才发转速。
+#
+# 为什么 LIO 要 external：Point-LIO 把"雷达 + IMU 所在刚体"当机体系（本工程里
+# 就是云台系，见 loam_interface 的 base_frame: gimbal_yaw；车体位姿由
+# sensor_scan_generation 每帧查 TF 换到 base_link），所以云台**可以**转；
+# 但 Point-LIO 初始化要求传感器静止几秒，一上电就 2 rad/s 会直接发散
+# （实测：RViz 里车飞出去、Gazebo 里不动）。所以只在初始化稳定后才开始转。
+GIMBAL_DRIVER="system"
+if [ "$USE_LIO_ODOMETRY" = "true" ]; then
+  GIMBAL_DRIVER="external"
+  GIMBAL_SPIN_NOTE_LIO=1
+fi
 NAV_EXTRA_ARGS=""
 
 # 先验 PCD: 接受绝对路径, 或文件名(在若干常用目录里找)
@@ -858,9 +876,17 @@ case "$YAW_MODE" in
   spin) echo '  (小陀螺: script/spin_control.sh on <rad/s> / off / status)' ;;
 esac
 if awk -v v="$GIMBAL_SPIN_WZ" 'BEGIN{ exit (v == 0) ? 0 : 1 }'; then
-  printf '云台自转  : 关 (静止; 用 --gimbal-spin <rad/s> 手动开)\n'
+  if [ "${GIMBAL_SPIN_NOTE_LIO:-0}" = "1" ]; then
+    printf '云台自转  : 关（LIO 模式：由 gimbal_spin_gate 在 Point-LIO 稳定后按 %s rad/s 启动）\n' "$GIMBAL_SPIN_WZ"
+  else
+    printf '云台自转  : 关 (静止; 用 --gimbal-spin <rad/s> 手动开)\n'
+  fi
 else
-  printf '云台自转  : %s rad/s (由仿真器直接施加; 云台上的雷达随之转动, Point-LIO 直接感知)\n' "$GIMBAL_SPIN_WZ"
+  if [ "$GIMBAL_DRIVER" = "external" ]; then
+    printf '云台自转  : %s rad/s (LIO 模式：等 Point-LIO 稳定后由 gimbal_spin_gate 启动；此前锁定)\n' "$GIMBAL_SPIN_WZ"
+  else
+    printf '云台自转  : %s rad/s (由仿真器直接施加; 云台上的雷达随之转动)\n' "$GIMBAL_SPIN_WZ"
+  fi
 fi
 case "$YAW_MODE" in
 esac
@@ -876,7 +902,7 @@ prekill_leftovers
 
 # 云台自转必须传给**这里**：Gazebo 是这条单独命令拉起的（导航 launch 的
 # start_simulation 默认 False，不走那条路），漏了就永远是 0 = 云台锁死。
-SIM_CMD="ros2 launch srm27_gazebo_simulator srm_sim.launch.py world:=${WORLD} gui:=${USE_GUI} run_immediately:=${RUN_IMMEDIATELY} gimbal_spin_rate:=${GIMBAL_SPIN_WZ}"
+SIM_CMD="ros2 launch srm27_gazebo_simulator srm_sim.launch.py world:=${WORLD} gui:=${USE_GUI} run_immediately:=${RUN_IMMEDIATELY} gimbal_spin_rate:=${GIMBAL_SPIN_WZ} gimbal_driver:=${GIMBAL_DRIVER}"
 
 if [ "$DRY_RUN" != "1" ]; then
   mkdir -p "$(dirname "$GAZEBO_LOCK_FILE")"

@@ -4,6 +4,7 @@ project(srm27_nav_bringup)
 find_package(ament_cmake_auto REQUIRED)
 
 install(PROGRAMS
+  scripts/gimbal_spin_gate.py
   scripts/simulation_ground_truth_odometry.py
   scripts/srm_minco_real_preflight.py
   scripts/srm_regression_metadata.py

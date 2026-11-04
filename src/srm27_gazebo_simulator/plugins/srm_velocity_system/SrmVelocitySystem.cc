@@ -118,6 +118,10 @@ class SrmVelocitySystemPrivate
 
   /// \brief 是否已经做过一次"命令 vs 实测"自检。
   public: bool gimbalSpinChecked{false};
+
+  /// \brief 云台是否由外部（ROS 话题 + gz JointController）驱动。
+  /// true 时本插件**完全不碰**云台关节，避免两个所有者互相覆盖。
+  public: bool gimbalExternalDriver{false};
 };
 
 //////////////////////////////////////////////////
@@ -183,6 +187,12 @@ void SrmVelocitySystem::Configure(
   }
 
   // 云台：仿真器直接驱动，不走 ROS 命令（小陀螺时由 SDF 给出恒定角速度）。
+  // external 模式（LIO 用）：云台转速改由 ROS 话题 + gz JointController 决定，
+  // 本插件完全不碰该关节，否则两个所有者会互相覆盖。
+  if (_sdf && _sdf->HasElement("gimbal_external_driver"))
+  {
+    this->dataPtr->gimbalExternalDriver = _sdf->Get<bool>("gimbal_external_driver");
+  }
   auto gimbalJointName = std::string("gimbal_yaw_joint");
   if (_sdf && _sdf->HasElement("gimbal_joint"))
   {
@@ -344,7 +354,8 @@ void SrmVelocitySystem::PreUpdate(
 
   // 云台匀速自转：每个物理步都写一次 JointVelocityCmd，等价于"恒速电机"。
   // 它与底盘速度完全独立 —— 底盘可以不动、云台照样转（小陀螺的语义）。
-  if (this->dataPtr->gimbalJoint != ignition::gazebo::kNullEntity)
+  if (!this->dataPtr->gimbalExternalDriver &&
+      this->dataPtr->gimbalJoint != ignition::gazebo::kNullEntity)
   {
     auto *jointVelCmd =
         _ecm.Component<ignition::gazebo::components::JointVelocityCmd>(
