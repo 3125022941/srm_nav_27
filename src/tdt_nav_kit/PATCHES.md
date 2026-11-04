@@ -12,7 +12,7 @@
 | P4 | `vendor/src/YAstar/yastar.cpp` | 681-688、710-716 | 8 行 `std::span` 视图改为等价 `std::vector` 构造 | 是，编译 + SDF 一致性单测 |
 | P5 | `vendor/src/YAstar/yastar.hpp` | 15-17 | OpenCV `__has_include` 守卫改为显式开关 `TDT_NAV_KIT_ENABLE_OPENCV` | 是，编译 |
 | P6 | `vendor/src/MinimumSnapOsqp/sfcSquare.hpp` | 12-16 | 同 P5 | 否（入库不编译） |
-| P7 | `vendor/src/MinimumSnapOsqp/sfcSquare.cpp` | 46-47, 145-146, 236-237, 297-298, 356-357 | 10 行 `(x + originPos)/mapping` → `(x - originPos)/mapping` | **否，阶段二才验证** |
+| P7 | `vendor/src/MinimumSnapOsqp/sfcSquare.cpp` | 46-47, 145-146, 236-237, 297-298, 356-357 | 10 行 `(x + originPos)/mapping` → `(x - originPos)/mapping` | **是，阶段二已单测验证** |
 | P8 | `yastar.hpp` / `yastar.cpp` / `sfcSquare.hpp` | 见下节 | 补齐 P5 关闭 OpenCV 后失去的隐式依赖：`<mutex>`、`<iostream>`、`u_char` | 是，编译 + 运行验证 |
 
 ---
@@ -78,7 +78,7 @@
 - `yastar.cpp:508` 的 `setMaskPoly` 定义与 `yastar.hpp` 里它的声明、`Tools::fillPoly` 声明/实现、`sfcSquare` 的 `cv::Mat` 重载，**都由同一个 `OPENCV_ALL_HPP` 宏统一消失**，不会出现「声明在、定义不在」的链接错误（这正是逐个改 `#if 0` 会引入的风险）；
 - 阶段二若要评估 OpenCV 快路径，只需在 CMake 定义该宏并显式 `find_package(OpenCV)`，无需再改 vendored 源码。
 
-## P7 · SfcSquare 原点符号统一（阶段二前置，本阶段不编译）
+## P7 · SfcSquare 原点符号统一（阶段二，已单测验证）
 
 上游 `main.cpp` 里 `originPos` 恒为 `(0,0)`，掩盖了一处不一致：
 
@@ -94,7 +94,13 @@ Nav2 Costmap 的 `origin_x/origin_y` 通常为**负值**，两者不等价，走
 
 `minimumSnap.cpp` 已是减法，不改；`sfcSquare.cpp:39-40` 的 `isOutside` 已是减法，不动。
 
-**本阶段 `sfcSquare.cpp` 不参与编译**，此补丁仅为「入库即正确」，尚未经过构建与运行验证。阶段二把 `minimumSnap.cpp` / `sfcSquare.cpp` 加入编译后，必须用**非零（负）原点**的 costmap 验证 `isOutside` / `valueAt` / `_getBound*` 与 `toCell` 的索引一致，再标记本条为「已验证」。
+**阶段二已验证**：`sfcSquare.cpp` / `minimumSnap.cpp` 已加入编译，`test/test_sfc_origin.cpp` 用**负原点**（`-2, -3`，分辨率 0.5）断言：
+
+- `isOutside(-2, -3)` 为假（原点本身在图内），原点外一格为真 —— 补丁前 `(x + originPos)` 会把原点算成栅格 `-8`，必判图外；
+- `valueAt()` 在原点格与偏移 (4,7)、(7,4) 格处取到预期值；
+- `MinimumSnap::lineInObsticle`（`toCell` 原本就是减号）与 `SfcSquare::valueAt` 对同一世界坐标给出一致结论，说明两套换算已统一。
+
+注意：该测试需开 `setStrictCollision(true)`，否则上游硬编码的 `obstacleTolerance = 2` 会放过穿 1 格薄墙的情况（见下节）。
 
 ---
 

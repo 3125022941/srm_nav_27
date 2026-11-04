@@ -33,9 +33,12 @@
 >
 > **关于 sha256 的可复现性**：上表按 **LF 内容**计算。仓库根无 `.gitattributes` 且本机 `core.autocrlf=true`，Windows 上重新 checkout 会把工作区文件转成 CRLF，直接对工作区文件求哈希会得到不同结果。校验请用 `git show HEAD:<path> | sha256sum`（取仓库 blob），或临时以 `-c core.autocrlf=false` checkout。
 
-## 编译范围（阶段一）
+## 编译范围
 
-`CMakeLists.txt` **只编译** `vendor/src/YAstar/yastar.cpp`。其余 3 个 `.cpp` 仅入库、不参与编译，原因：`minimumSnap.hpp` 无条件 `#include <OsqpEigen/OsqpEigen.h>`，阶段一不引入 OSQP / OsqpEigen。`kinodynamicAstar.cpp` 亦未编译（上游自述全局搜索约 2 s，主链路只用普通 A*）。
+`CMakeLists.txt` 编译 `vendor/src/YAstar/yastar.cpp`、`vendor/src/MinimumSnapOsqp/minimumSnap.cpp`
+与 `vendor/src/MinimumSnapOsqp/sfcSquare.cpp`；后两者需要 OSQP（`osqp_vendor`）与
+OsqpEigen（无 rosdep key，源码安装，见 README）。`kinodynamicAstar.cpp` 仍不编译：
+上游自述全局搜索约 2 s，主链路不用普通 A* 之外的搜索。
 
 ## 许可证适用边界
 
