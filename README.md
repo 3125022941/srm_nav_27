@@ -77,6 +77,7 @@ srm_nav_27/
 │   ├── tools/                开发工具（pcd2pgm、录包、键盘云台）
 │   └── dependencies/         第三方依赖（vcs 拉取，勿手改）
 ├── script/                   现场启动与诊断脚本
+├── debug_tools/              调试期波形/排查脚本（不进 colcon，见 debug_tools/README.md）
 ├── docs/                     使用指南与设计记录
 ├── maps/                     实车场地地图（按场地名分目录）
 ├── build/ install/ log/      colcon 构建输出
