@@ -65,6 +65,8 @@ def launch_setup(context):
         params_file,
         LaunchConfiguration("lidar_xyz").perform(context),
         LaunchConfiguration("lidar_rpy").perform(context),
+        # 实车的云台是真关节：默认 revolute，让 TF 跟随 /joint_states 的云台角。
+        gimbal_joint_type=LaunchConfiguration("gimbal_joint_type").perform(context),
     )
 
     use_sim_time = ParameterValue(
@@ -108,6 +110,12 @@ def generate_launch_description():
             "lidar_rpy",
             "",
             "LiDAR mounting rpy in radians (empty = 用唯一模型里的值)",
+        ),
+        (
+            "gimbal_joint_type",
+            "revolute",
+            "云台关节类型: revolute=真关节(跟随 /joint_states 的 gimbal_yaw_joint), "
+            "fixed=旧行为(云台固定在零位)。取不到关节状态时两者等价。",
         ),
         ("use_sim_time", "False", "Use the simulation clock if True"),
     ]

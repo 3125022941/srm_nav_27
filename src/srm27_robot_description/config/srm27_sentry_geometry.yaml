@@ -118,17 +118,28 @@ imu:
   sensor_name: chassis_imu
   update_rate: 200
 
-# 云台示意圆柱（半透明黄），与实车链路 xacro 里的 gimbal_yaw 外观一致。
-# 仿真里它**只有 visual、没有 collision、也没有关节/传感器**：不影响动力学与导航，
-# 纯属让两条链路看起来是同一台车。设 enabled: false 就不画。
-# 云台（与底盘同轴，只有 yaw 一个自由度）。**雷达挂在它下面**，所以即使
-# enabled: false，gimbal_yaw 这个 link 与它的关节也一定会生成（否则雷达就没有父节点）；
-# enabled 只控制"画不画那根半透明黄圆柱"。
+# 云台（与底盘同轴，只有 yaw 一个自由度）。**雷达挂在它下面**，所以
+# gimbal_yaw 这个 link 与它的关节一定会生成（否则雷达就没有父节点）。
+#
+# 2026-11-04: 云台在仿真里从"纯 visual 的固定件"改成**真关节**（continuous），
+#   由**仿真器自己**驱动：SrmVelocitySystem 每个物理步按 <gimbal_spin_rate> 施加关节
+#   角速度（不经过 ROS 话题、桥接或任何外部脚本，单一所有者）。
+#   转速由启动脚本给：--yaw-mode spin 默认 2.0 rad/s，也可 --gimbal-spin <rad/s>
+#   （负值=反向），默认 0 = 不转。云台连同装在它上面的雷达一起转，点云真的在转，
+#   Point-LIO 因此直接"感知"到这个自转 —— 与实车同构。
+#
+#   movable: true   关节是否可动（false = 退回旧的固定件，行为与改动前完全一致）
+#   mass/damping/friction  只在 movable 时用：可动件必须建惯性才能参与动力学
 yaw_envelope:
   enabled: true
   link_name: gimbal_yaw
   radius: 0.150
   length: 0.110
+  movable: true            # 仿真里云台是否真的能转
+  mass: 0.30               # 云台（含雷达支架）等效质量（kg）
+  damping: 0.05            # 关节阻尼：让"停命令"后能停住而不是匀速滑行
+  friction: 0.02           # 关节静摩擦
+  max_velocity: 8.0        # 关节速度上限（rad/s），只用于文档/自检，gz 侧不强制
   # 底面对齐底盘顶面（chassis.center_z + chassis.length/2 = 0.26805），
   # 由 model_builder 自动算，不必在这里写高度。
   color: [0.95, 0.80, 0.25, 1.0]

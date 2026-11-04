@@ -245,13 +245,24 @@ def yaw_top_z(config, base_link):
     return float(chassis["center_z"]) + float(chassis["length"]) / 2.0
 
 
+def yaw_is_movable(config):
+    """仿真里云台是否建成可动关节（yaw_envelope.movable，默认 True）。"""
+    return bool((config.get("yaw_envelope") or {}).get("movable", True))
+
+
 def _yaw_visual_sdf(config, base_link):
-    """SDF 版云台：joint + link **始终生成**（雷达是它的子节点），
-    示意圆柱只在 yaw_envelope.enabled 时画，不建 collision、不加惯性。"""
+    """SDF 版云台：joint + link **始终生成**（雷达是它的子节点）。
+
+    movable=True 时建成"能一直转"的关节（SDF 侧 revolute + ±DBL_MAX 限位，
+    因为 SDFormat 没有 continuous 类型）+ 建惯性，由 gz 的
+    JointController 按速度驱动，于是云台与它上面的雷达会真的转（点云跟着转，
+    与实车同构）；movable=False 时退回旧行为（fixed 固定件、无惯性）。
+    示意圆柱只在 yaw_envelope.enabled 时画，始终不建 collision。"""
     yaw = config.get("yaw_envelope") or {}
     top_z = yaw_top_z(config, base_link)
     name = yaw_link_name(config)
     joint_name = f"{name}_joint"
+    movable = yaw_is_movable(config)
     if not yaw.get("enabled"):
         visual = ""
     else:
@@ -281,14 +292,57 @@ def _yaw_visual_sdf(config, base_link):
 {_sdf_material(yaw['color'], yaw.get('transparency'))}
       </visual>
 {marks}"""
-    return f"""
+    if movable:
+        mass = float(yaw.get("mass", 0.30))
+        damping = float(yaw.get("damping", 0.05))
+        friction = float(yaw.get("friction", 0.02))
+        radius = float(yaw.get("radius", 0.150))
+        length = float(yaw.get("length", 0.110))
+        inertia = _cylinder_inertia(mass, radius, length, "z")
+        # ⚠ SDFormat **没有** continuous 这种关节类型（那是 URDF 的概念）。
+        #   写成 type="continuous" 会让物理引擎报
+        #     [Err] [SDFFeatures.cc] Asked to construct a joint of sdf::JointType [N] ...
+        #   关节直接建不出来 → 云台永远停在 0（2026-11-04 实测踩过）。
+        #   仿真里"能一直转"的写法与轮子完全一致：revolute + ±DBL_MAX 的限位。
+        joint_block = f"""
+    <joint name="{joint_name}" type="revolute">
+      <parent>{base_link}</parent>
+      <child>{name}</child>
+      <pose relative_to="{base_link}">0 0 {top_z!r} 0 0 0</pose>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit>
+          <lower>{-1.7976931348623157e+308!r}</lower>
+          <upper>{1.7976931348623157e+308!r}</upper>
+          <effort>30</effort>
+          <velocity>{float(yaw.get('max_velocity', 8.0))!r}</velocity>
+        </limit>
+        <dynamics>
+          <damping>{damping!r}</damping>
+          <friction>{friction!r}</friction>
+        </dynamics>
+      </axis>
+    </joint>"""
+        inertial_block = (
+            f"""
+      <inertial>
+        <pose>0 0 {length / 2.0!r} 0 0 0</pose>
+        <mass>{mass!r}</mass>
+        {_sdf_inertia(mass, inertia)}
+      </inertial>"""
+        )
+    else:
+        joint_block = f"""
     <joint name="{joint_name}" type="fixed">
       <parent>{base_link}</parent>
       <child>{name}</child>
       <pose relative_to="{base_link}">0 0 {top_z!r} 0 0 0</pose>
-    </joint>
+    </joint>"""
+        inertial_block = ""
+
+    return joint_block + f"""
     <link name="{name}">
-      <pose relative_to="{joint_name}">0 0 0 0 0 0</pose>{visual}
+      <pose relative_to="{joint_name}">0 0 0 0 0 0</pose>{inertial_block}{visual}
     </link>"""
 
 
@@ -311,7 +365,9 @@ def _urdf_mappings(config):
         # 坐标系契约
         "root_frame": "base_link",
         "wheel_joint_type": "continuous",
-        "gimbal_joint_type": "fixed",
+        # 与 SDF 侧保持一致：云台可动时 URDF 也必须是 revolute，否则
+        # robot_state_publisher 会忽略 /joint_states 里的云台角（RViz 里看不到云台转）。
+        "gimbal_joint_type": "revolute" if yaw_is_movable(config) else "fixed",
         # 底盘 / 轮组
         "chassis_radius": repr(float(chassis["radius"])),
         "chassis_length": repr(float(chassis["length"])),
@@ -360,11 +416,17 @@ def build_sdf(
     velocity_topic="cmd_vel",
     odometry_topic="odometry",
     command_timeout=0.1,
+    gimbal_spin_rate=0.0,
 ):
     """生成供 Gazebo Fortress 加载的完整 SRM 模型 SDF 文本。
 
     ``velocity_topic`` / ``odometry_topic`` 为相对话题名，Gazebo Transport 会
     自动加上模型名前缀，例如 ``<model>/cmd_vel`` 与 ``<model>/odometry``。
+
+    ``gimbal_spin_rate``：云台匀速自转角速度（rad/s，负值反向；0 = 不转）。
+    由 ``SrmVelocitySystem`` 每个物理步直接施加，**不经过任何 ROS 话题/桥接**，
+    所以小陀螺时云台连同装在它上面的雷达就是匀速转 —— 点云真的在转，
+    Point-LIO 天然感知到这个自转（与实车同构）。
     """
     config = geometry or load_geometry()
     model_name = config["robot"]["name"]
@@ -382,6 +444,19 @@ def build_sdf(
     wheel_material = _sdf_material(wheel.get("color", [0.05, 0.05, 0.05, 1.0]))
     lidar_visual = _lidar_visual_sdf(lidar)
     yaw_visual = _yaw_visual_sdf(config, base_link)
+    # 云台驱动：movable 时挂 Fortress 的 JointController（**速度**控制版，
+    # 订阅 <model>/joint/<joint>/0/cmd_vel，类型 ignition.msgs.Double）。
+    # initial_velocity=0 => 不收到命令就静止，改动对既有用法零影响。
+    # 云台自转由**自有速度插件**直接施加（不再挂 gz 的 JointController）：
+    # 单一所有者、不依赖 ROS 命令与桥接，小陀螺时仿真器自己就能让它匀速转。
+    if yaw_is_movable(config):
+        yaw_joint = f"{yaw_link_name(config)}_joint"
+        yaw_driver_plugin = (
+            f"\n      <gimbal_joint>{yaw_joint}</gimbal_joint>"
+            f"\n      <gimbal_spin_rate>{float(gimbal_spin_rate)!r}</gimbal_spin_rate>"
+        )
+    else:
+        yaw_driver_plugin = ""
     # 底盘的旋转标记（红）：刻线只画在云台外面的那圈顶面上，免得和云台圆柱打架。
     yaw_radius = float((config.get("yaw_envelope") or {}).get("radius", 0.150))
     chassis_marks = _rotation_marks_sdf(
@@ -563,7 +638,7 @@ def build_sdf(
       <command_topic>{velocity_topic}</command_topic>
       <odom_topic>{odometry_topic}</odom_topic>
       <odom_publish_frequency>50</odom_publish_frequency>
-      <command_timeout>{command_timeout!r}</command_timeout>
+      <command_timeout>{command_timeout!r}</command_timeout>{yaw_driver_plugin}
     </plugin>
   </model>
 </sdf>

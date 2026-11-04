@@ -263,6 +263,16 @@ def generate_launch_description():
     effective_yaw_mode = PythonExpression([
         "'", yaw_mode_arg, "' if '", yaw_mode_arg, "' != 'auto' else 'se2'",
     ])
+
+    # 云台自转：auto = 跟随航向策略（spin -> 2.0 rad/s，其它 -> 0）。
+    # 这样即使直接用 ros2 launch 起（不经 start_sim_nav.sh），小陀螺也一定转。
+    gimbal_rate_arg = LaunchConfiguration("gimbal_spin_rate")
+    effective_gimbal_rate = PythonExpression([
+        "'2.0' if ('", gimbal_rate_arg, "' == 'auto' and '", effective_yaw_mode,
+        "' == 'spin') else ('0.0' if '", gimbal_rate_arg, "' == 'auto' else '",
+        gimbal_rate_arg, "')",
+    ])
+
     # 判停器与航向策略必须配套：spin 模式下车到点仍在自转（小陀螺驻车），
     # StoppedGoalChecker 的角速度判停永远不会通过，必须换成只看平移的
     # OmniStoppedGoalChecker；非 spin 时保持迁移链/旧链路各自的文件值。
@@ -308,6 +318,9 @@ def generate_launch_description():
             )
         ),
         condition=IfCondition(start_simulation),
+        launch_arguments={
+            "gimbal_spin_rate": effective_gimbal_rate,
+        }.items(),
     )
 
     # 2) 点云转换：保持现有 ign_sim_pointcloud_tool 链路。
@@ -493,6 +506,17 @@ def generate_launch_description():
                 bringup_dir, "config", "simulation", "nav2_params_srm.yaml"
             ),
             description="Full path to the ROS2 parameters file to use for all launched nodes",
+        )
+    )
+    ld.add_action(
+        DeclareLaunchArgument(
+            "gimbal_spin_rate",
+            default_value="auto",
+            description=(
+                "云台匀速自转角速度 (rad/s, 负值反向, 0=不转)。auto = 跟随 yaw_mode："
+                "spin 时 2.0，其它 0。由 SrmVelocitySystem 每个物理步直接施加，云台连同其上的"
+                "雷达匀速转，Point-LIO 直接感知该自转。直接用 ros2 launch 起也不会忘记传。"
+            ),
         )
     )
     ld.add_action(

@@ -91,6 +91,11 @@
 #                                map->odom 初值, 等价于 nav2 参数的 init_pose;
 #                                给了就以它为准 (不再从 manifest 推导)
 #       --yaw-mode <auto|se2|spin>  MINCO 航向策略 (默认 auto=se2, 导航拥有 wz)。
+#                                   spin 时**云台默认以 2.0 rad/s 匀速自转**（仿真器直接
+#                                   施加，雷达跟着转、Point-LIO 直接感知）。
+#       --gimbal-spin <rad/s>       云台自转角速度，负值=反向；0 = 不转。
+#                                   也可用环境变量 GIMBAL_SPIN_WZ 覆盖。
+#       --no-gimbal-spin            等价于 --gimbal-spin 0。
 #                                   spin = 小陀螺: 自转请求经 rotation_cmd 直接进
 #                                   MINCO, 判停自动换 OmniStoppedGoalChecker,
 #                                   转速用 script/spin_control.sh
@@ -168,6 +173,9 @@ VERIFY_GOAL_TIMEOUT="${VERIFY_GOAL_TIMEOUT:-180}"
 VERIFY_KEEP="${VERIFY_KEEP:-0}"              # 1 = 验证完不清理, 留着看 RViz/调试
 #: MINCO 航向策略: auto=se2 (导航拥有 wz); spin=小陀螺 (外部自转请求进线)。
 YAW_MODE="${YAW_MODE:-auto}"
+# 云台自转角速度 (rad/s)：留空 = 按航向策略自动决定（spin -> 2.0，其它 -> 0）。
+# 由仿真器 SrmVelocitySystem 直接施加，不经 ROS 话题/桥接；负值 = 反向。
+GIMBAL_SPIN_WZ="${GIMBAL_SPIN_WZ:-}"
 
 # 自定义 RViz 配置（留空 = 用包内 rviz/nav2_default_view.rviz；--rviz-config 覆盖）
 RVIZ_CONFIG="${RVIZ_CONFIG:-}"
@@ -231,6 +239,8 @@ while [ $# -gt 0 ]; do
     --smoother)   USE_VELOCITY_SMOOTHER="True"; shift ;;
     --no-smoother) USE_VELOCITY_SMOOTHER="False"; shift ;;
     --yaw-mode)   YAW_MODE="${2:?--yaw-mode 需要 auto|se2|spin}"; shift 2 ;;
+    --gimbal-spin) GIMBAL_SPIN_WZ="${2:?--gimbal-spin 需要 rad/s 数值}"; shift 2 ;;
+    --no-gimbal-spin) GIMBAL_SPIN_WZ="0"; shift ;;
     --verify-spin) VERIFY_SPIN=1; YAW_MODE="spin"; shift ;;
     -h|--help)    usage; exit 0 ;;
     *) echo "[错误] 未知参数: $1 (用 -h 查看用法)" >&2; exit 2 ;;
@@ -257,6 +267,15 @@ case "$YAW_MODE" in
     ;;
   *) echo "[错误] --yaw-mode 只支持 auto / se2 / spin" >&2; exit 2 ;;
 esac
+# 云台自转：**默认就转**（2.0 rad/s），与航向策略、有没有导航目标都无关 ——
+# 操作手要求"云台一直匀速转"。要它停用 --no-gimbal-spin 或 GIMBAL_SPIN_WZ=0。
+if [ -z "$GIMBAL_SPIN_WZ" ]; then
+  GIMBAL_SPIN_WZ="2.0"
+fi
+case "$GIMBAL_SPIN_WZ" in
+  ''|*[!0-9.eE+-]*) echo "[错误] 云台自转速度必须是数字 (rad/s): $GIMBAL_SPIN_WZ" >&2; exit 2 ;;
+esac
+
 if [ "$VERIFY_SPIN" = "1" ] && [ "$YAW_MODE" != "spin" ]; then
   echo "[错误] --verify-spin 需要 --yaw-mode spin（小陀螺验证），当前是 $YAW_MODE" >&2
   exit 2
@@ -838,6 +857,13 @@ case "$YAW_MODE" in
   se2)  echo '  (导航拥有 wz: 车头跟路径切线)' ;;
   spin) echo '  (小陀螺: script/spin_control.sh on <rad/s> / off / status)' ;;
 esac
+if awk -v v="$GIMBAL_SPIN_WZ" 'BEGIN{ exit (v == 0) ? 0 : 1 }'; then
+  printf '云台自转  : 关 (静止; 用 --gimbal-spin <rad/s> 手动开)\n'
+else
+  printf '云台自转  : %s rad/s (由仿真器直接施加; 云台上的雷达随之转动, Point-LIO 直接感知)\n' "$GIMBAL_SPIN_WZ"
+fi
+case "$YAW_MODE" in
+esac
 if [ "$VERIFY_SPIN" = "1" ]; then
   printf '验证模式  : --verify-spin (自转 %s rad/s, 目标 %s m, 跑完%s)\n' \
       "$VERIFY_SPIN_WZ" "$VERIFY_GOAL_DIST" \
@@ -848,7 +874,9 @@ echo
 
 prekill_leftovers
 
-SIM_CMD="ros2 launch srm27_gazebo_simulator srm_sim.launch.py world:=${WORLD} gui:=${USE_GUI} run_immediately:=${RUN_IMMEDIATELY}"
+# 云台自转必须传给**这里**：Gazebo 是这条单独命令拉起的（导航 launch 的
+# start_simulation 默认 False，不走那条路），漏了就永远是 0 = 云台锁死。
+SIM_CMD="ros2 launch srm27_gazebo_simulator srm_sim.launch.py world:=${WORLD} gui:=${USE_GUI} run_immediately:=${RUN_IMMEDIATELY} gimbal_spin_rate:=${GIMBAL_SPIN_WZ}"
 
 if [ "$DRY_RUN" != "1" ]; then
   mkdir -p "$(dirname "$GAZEBO_LOCK_FILE")"
@@ -918,7 +946,7 @@ fi
 
 # 定位方式由 NAV_EXTRA_ARGS 统一给出 (use_pcd_localization / use_lio_odometry /
 # prior_pcd_file); fakeyaw 链路的两个开关跟在它后面, 与定位方式正交。
-NAV_CMD="ros2 launch srm27_nav_bringup nav_srm_simulation_launch.py namespace:=${ROBOT_NS} world:=${WORLD} map:=${MAP_FILE_Q} params_file:=${PARAMS_FILE_Q} slam:=False${NAV_EXTRA_ARGS} use_fakeyaw_transform:=${USE_FAKEYAW_ARG} command_frame:=${COMMAND_FRAME_ARG} use_composition:=${USE_COMPOSITION} use_sim_time:=True use_rviz:=${USE_RVIZ}${RVIZ_CONFIG_ARG} use_velocity_smoother:=${USE_VELOCITY_SMOOTHER} yaw_mode:=${YAW_MODE}"
+NAV_CMD="ros2 launch srm27_nav_bringup nav_srm_simulation_launch.py namespace:=${ROBOT_NS} world:=${WORLD} map:=${MAP_FILE_Q} params_file:=${PARAMS_FILE_Q} slam:=False${NAV_EXTRA_ARGS} use_fakeyaw_transform:=${USE_FAKEYAW_ARG} command_frame:=${COMMAND_FRAME_ARG} use_composition:=${USE_COMPOSITION} use_sim_time:=True use_rviz:=${USE_RVIZ}${RVIZ_CONFIG_ARG} use_velocity_smoother:=${USE_VELOCITY_SMOOTHER} yaw_mode:=${YAW_MODE} gimbal_spin_rate:=${GIMBAL_SPIN_WZ}"
 start_once "SRM27 导航 + 速度出口 + RViz" "$NAV_PATTERN" "$NAV_CMD"
 
 if [ "$VERIFY_SPIN" = "1" ]; then

@@ -112,10 +112,22 @@ def _launch_setup(context):
     velocity = config["velocity"]
 
     # 机器人模型与 URDF 由同一份几何 YAML 生成，仿真与实车不会各自漂移。
+    # 云台自转角速度：小陀螺时由启动脚本给非零值，仿真器每步直接施加。
+    gimbal_spin_rate = float(
+        LaunchConfiguration("gimbal_spin_rate").perform(context) or 2.0
+    )
+    # 打印生效的云台转速：这条日志是"云台为什么转/不转"的第一现场证据。
+    from launch.actions import LogInfo  # noqa: PLC0415 - 与文件内其它 import 风格一致
+    if abs(gimbal_spin_rate) > 0.0:
+        gimbal_note = f"云台匀速自转 {gimbal_spin_rate} rad/s（仿真器直接施加，雷达随之转动）"
+    else:
+        gimbal_note = "云台锁定（转速 0）：不会自转，只跟随底盘"
+    launch_note = LogInfo(msg=f"[云台] {gimbal_note}")
     robot_sdf = build_sdf(
         velocity_topic=velocity["gz_command_topic"],
         odometry_topic=velocity["odom_topic"],
         command_timeout=float(velocity["command_timeout"]),
+        gimbal_spin_rate=gimbal_spin_rate,
     )
     robot_urdf = build_urdf()
 
@@ -221,6 +233,7 @@ def _launch_setup(context):
     )
 
     return [
+        launch_note,
         gazebo,
         spawn_robot,
         set_performer_service,
@@ -240,6 +253,16 @@ def generate_launch_description():
                 default_value=os.path.join(pkg_share, "config", "srm_sim.yaml"),
                 description="仿真入口配置（世界、初始位姿与速度参数）",
             ),
+            DeclareLaunchArgument(
+                "gimbal_spin_rate",
+                default_value="2.0",
+                description=(
+                    "云台匀速自转角速度 (rad/s, 负值反向, 0=不转)。默认 2.0 = 起来就一直转，"
+                    "与有没有导航目标无关；由 SrmVelocitySystem 每个物理步直接施加。"
+                    "要停就用 gimbal_spin_rate:=0。"
+                ),
+            ),
+
             DeclareLaunchArgument(
                 "robot_name",
                 default_value="",

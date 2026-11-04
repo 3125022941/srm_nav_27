@@ -203,18 +203,36 @@ def lidar_mounting(robot, base_link, lidar_link):
     return {"xyz": position, "rpy": list(_rpy_from_quaternion(orientation))}
 
 
-def build_description(params_file, lidar_xyz, lidar_rpy, lidar_link_name="livox_frame"):
+def build_description(
+    params_file,
+    lidar_xyz,
+    lidar_rpy,
+    lidar_link_name="livox_frame",
+    gimbal_joint_type="revolute",
+):
     """构建实车 robot_description。
 
     返回 ``(urdf_text, mounting)``：``mounting`` 是解析出来的 ``base_link -> 雷达``
     组合位姿（``{"xyz": [...], "rpy": [...]}``），launch 用它算 gravity 与切片高度。
 
     ``lidar_xyz`` / ``lidar_rpy`` 传空字符串表示"用模型里的默认值"。
+
+    ``gimbal_joint_type``：实车的云台**也是一个真关节**（2026-11-04 确认），所以默认
+    ``revolute`` —— 这样 ``robot_state_publisher`` 会跟随 ``/joint_states`` 里的
+    ``gimbal_yaw_joint`` 更新 ``base_link -> gimbal_yaw -> <雷达>`` 的 TF，RViz 里
+    能看到云台真的转、点云朝向也跟着对。
+    兼容措施：拿不到 ``gimbal_yaw_joint`` 的关节角时，``robot_state_publisher`` 会把
+    它摆在 0 位，TF 与旧的 ``fixed`` 完全一致，所以**不会因为上游没发关节状态而出问题**。
+    需要回退时把它传成 ``"fixed"``（见 launch 的 ``gimbal_joint_type`` 参数）。
     """
+    if gimbal_joint_type not in ("revolute", "fixed"):
+        raise ValueError(
+            f"gimbal_joint_type 只能是 revolute/fixed，收到 {gimbal_joint_type!r}"
+        )
     mappings = {
         "root_frame": "base_link",
         "wheel_joint_type": "fixed",
-        "gimbal_joint_type": "fixed",
+        "gimbal_joint_type": gimbal_joint_type,
         "lidar_link_name": lidar_link_name,
     }
     if str(lidar_xyz).strip():
