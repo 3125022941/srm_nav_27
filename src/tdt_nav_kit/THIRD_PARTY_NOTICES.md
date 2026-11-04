@@ -30,6 +30,8 @@
 | `LICENCE` | 1091 | `fab3c8fd7e83f54e1d8a45d08d3683eb8ba47a52a08bb7dbaac550d7160677a0` | 同左（**原样不改**） |
 
 > 上游的 `main.cpp`（示例 + 可视化）、`CMakeLists.txt`、`scripts/setup.sh`、`.gitmodules`、`doc/`、`images/` **未引入**。
+>
+> **关于 sha256 的可复现性**：上表按 **LF 内容**计算。仓库根无 `.gitattributes` 且本机 `core.autocrlf=true`，Windows 上重新 checkout 会把工作区文件转成 CRLF，直接对工作区文件求哈希会得到不同结果。校验请用 `git show HEAD:<path> | sha256sum`（取仓库 blob），或临时以 `-c core.autocrlf=false` checkout。
 
 ## 编译范围（阶段一）
 
