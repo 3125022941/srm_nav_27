@@ -583,13 +583,13 @@ smoother_server:
       order: 5                                            # 多项式阶数
       max_dx: 3                                           # 最大导数阶数
       strict_collision: false                             # 更严格但更慢、更易失败
-      backend: "corridor"                                 # corridor | path | close
+      backend: "close"                                    # close | path | corridor（corridor 在本图不收敛）
       collision_iter: 2                                   # 碰撞检测迭代次数
       norm_time: true                                     # 段内归一化时间
-      max_corridor_range: 1.0e9                           # 走廊最大扩张范围（米）
+      max_corridor_range: 10.0                                   # 走廊最大扩张范围（米），过大会溢出
       corridor_shrink: 0.0                                # 走廊收缩（米）
-      max_speed: 2.0                                      # 仅影响时间分配
-      max_acc: 2.0                                        # 仅影响时间分配
+      max_speed: 50.0                                     # 仅影响时间分配，上游建议>40
+      max_acc: 20.0                                       # 仅影响时间分配，上游建议>10
       min_points: 3                                       # 少于此点数不做平滑
       orientation_mode: "tangent"                         # 由相邻点求 yaw
 

@@ -67,11 +67,17 @@ private:
   int order_{5};
   int max_dx_{3};
   bool strict_collision_{false};
-  /// "corridor"（OSQPCorridor，质量优先）| "path"（OSQPPath）| "close"（闭式）
-  std::string backend_{"corridor"};
+  /// "close"（闭式，默认）| "path"（OSQPPath）| "corridor"（OSQPCorridor）
+  ///
+  /// 默认取 close：在 RMUC 2026 仿真地图上实测，corridor 后端生成的走廊约束
+  /// 会让 OSQP 长期不收敛（状态 -4/-6），而 close 后端 0.2~19 ms 即可解出且
+  /// 经迭代碰撞检查后无碰撞。corridor 仍保留可配，待走廊生成调好后可切回。
+  std::string backend_{"close"};
   int collision_iter_{2};
   bool norm_time_{true};
-  float max_corridor_range_{1e9f};
+  /// 走廊最大扩张范围（米）。不要给 1e9 之类的"不限"值：
+  /// 上游 _getBound 会把它除以分辨率再转 int，0.05 m/格 时直接溢出。
+  float max_corridor_range_{10.0f};
   float corridor_shrink_{0.0f};
   float max_speed_{2.0f};
   float max_acc_{2.0f};

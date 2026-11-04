@@ -149,6 +149,54 @@ git diff --name-only b2d6fc2..HEAD | grep -v '^src/tdt_nav_kit/'   # 应无输�
 git rev-parse main                                                    # 应仍是 b2d6fc2
 ```
 
+## 仿真实测（2026-11-05，Ignition Fortress 无头容器）
+
+在容器里跑起完整链路：Ignition Fortress 6.18（`rmuc_2025` 世界 + `rmuc_2025.yaml` 地图）
++ Nav2（`nav2_params_srm_tdt_smooth.yaml`），机器人出生点改到 (3.4, 5.0)
+（默认 (3.4, 9.5) 在地图 y 范围 [-9.44, 6.76] 之外，Nav2 无法规划）。
+
+两个插件都在真实 Nav2 栈里加载成功：
+
+```
+ros2 param get /red_standard_robot1/planner_server GridBased.plugin    -> tdt_nav_kit::TdtGlobalPlanner
+ros2 param get /red_standard_robot1/smoother_server tdt_smoother.plugin -> tdt_nav_kit::TdtSmoother
+```
+
+同一起终点 (3.4, 5.0) → (12, 3)，两者路径都经逐 2 cm 采样验证**未穿障、未出图**：
+
+| 链路 | 点数 | 路径长度 | 规划耗时 | 平滑 |
+| --- | --- | --- | --- | --- |
+| ThetaStar + SimpleSmoother（基线） | 598（间距 0.074 m） | 33.16 m | ~102 ms | SimpleSmoother 未改变路径 |
+| YAstar + TdtSmoother | 11 → **101** | 34.87 → 37.10 m | ~45 ms | **1 ms**，最大步长 6.06 → **0.78 m** |
+
+规划拓扑一致（两条都绕过同一片墙，说明不是我们的转换层把地图读歪），
+YAstar 的路径点少 54 倍、规划快约 2 倍；TDT 平滑器把 6 m 的稀疏折线插成 0.78 m
+的连续轨迹，代价是路径长度 +6%。
+
+### 仿真暴露并已修掉的三个问题
+
+1. **配置写 `1.0e9` 被 YAML 1.1 当成字符串** → `smoother_server` 配置期直接报
+   `parameter ... is invalid type ... setting it to {string} is not allowed`，整个
+   导航栈起不来。改成 `10.0`。
+2. **`max_corridor_range` 转 int 溢出**：上游 `_getBound()` 里
+   `static_cast<int>(maxRange / mapping)`，1e9 / 0.05 = 2e10 超出 int，
+   走廊扩张越界读，**直接把 component_container 打崩**（无 OOM 记录、无异常输出）。
+   代码里加了硬性夹紧 `kMaxCorridorRangeLimit = 1e6`，默认值降到 10 m。
+3. **`corridor` 后端在真实地图上不可行**：OSQP 返回 -4（dual infeasible）/ -6（超时），
+   稀疏与稠密路径都不收敛；同一路径 `close` 后端 0.2~19 ms 解出且无碰撞。
+   默认后端改为 `close`，并在参数文件注明原因。
+
+另外把 `max_speed / max_acc` 从 2.0/2.0 改成 **50/20**：上游注释明确
+「建议 speed 大于 40，acc 大于 10」，按 m/s 直觉给 2.0 会让时间分配差一个数量级、
+QP 条件数变差（改前 `close` 后端同样失败）。
+
+### 未能完成的部分（环境限制，非插件问题）
+
+闭环行驶只走了 0.66 m / 150 s。原因是仿真在无头软件渲染下 RTF 仅 **0.36**，
+且日志持续报 `tf2_buffer: Detected jump back in time. Clearing TF buffer` 与
+`Lookup would require extrapolation`，`follow_path` 反复 Aborting。
+这是容器 + llvmpipe 的仿真环境问题，插件本身在规划/平滑两级的验证都已通过。
+
 ## 阶段二进展与遗留
 
 已完成：OSQP（`osqp_vendor`）+ OsqpEigen v0.8.0 接入；`minimumSnap.cpp` /

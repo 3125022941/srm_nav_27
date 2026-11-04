@@ -21,6 +21,10 @@ namespace tdt_nav_kit
 namespace
 {
 
+/// max_corridor_range 的安全上限。上游 _getBound 把 maxRange/mapping 转 int，
+/// 必须保证结果落在 int 范围内（1e6 / 0.05 = 2e7）。
+constexpr float kMaxCorridorRangeLimit = 1.0e6f;
+
 MinimumSnap::Backend toBackend(const std::string & name)
 {
   if (name == "path") {
@@ -239,7 +243,12 @@ bool TdtSmoother::smooth(
   input.setTimeAllocated(time_allocated);
   input.setNormTime(norm_time_);
   input.setCollisionCheckIter(collision_iter_);
-  input.setMaxCorridorRange(max_corridor_range_);
+
+  // 上游 SfcSquare::_getBound() 把 maxRange 直接 static_cast<int>(maxRange/mapping)。
+  // 若参数给 1e9（"相当于不限"），在 0.05 m/格 的地图上得到 2e10，超出 int 范围，
+  // 溢出后循环边界异常，_getBound 会越界读并直接把进程打崩。
+  // 这里做一次硬性夹紧：1e6 / 0.05 = 2e7，仍在 int 范围内。
+  input.setMaxCorridorRange(std::min(max_corridor_range_, kMaxCorridorRangeLimit));
   input.setCorridorShrink(corridor_shrink_);
 
   // 4) 求解。上游不收敛时返回空路径且 success=false（无闭式兜底），
