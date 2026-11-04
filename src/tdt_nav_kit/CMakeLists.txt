@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 project(tdt_nav_kit)
 
-# 阶段一：只把 vendored T-DT YAstar 包装成 Nav2 GlobalPlanner。
+# 阶段二：YAstar 全局规划器 + MinimumSnap/SfcSquare 平滑器。
 # 上游源码含未使用变量等告警，故本包**不启用**「告警即报错」选项
 # （对比 srm27_nav_plugins/CMakeLists.txt:9 的写法）。
 set(CMAKE_CXX_STANDARD 17)
@@ -13,18 +13,23 @@ find_package(ament_cmake_auto REQUIRED)
 ament_auto_find_build_dependencies()
 find_package(Eigen3 REQUIRED)
 find_package(pluginlib REQUIRED)
+# OSQP 由 osqp_vendor（ROS 包，apt 可装）提供；OsqpEigen 无 rosdep key，
+# 需源码安装（默认前缀 /usr/local），见 README「阶段二依赖」。
+find_package(osqp_vendor REQUIRED)
+find_package(OsqpEigen REQUIRED)
 
 if(NOT TARGET Eigen3::Eigen)
   message(FATAL_ERROR "tdt_nav_kit 需要 Eigen3::Eigen，未找到可用的 Eigen3 目标。")
 endif()
 
-# 阶段一唯一编译的上游 TU。minimumSnap.cpp / sfcSquare.cpp / kinodynamicAstar.cpp
-# 仅入库不编译：minimumSnap.hpp 无条件 #include <OsqpEigen/OsqpEigen.h>，
-# 阶段一不引入 OSQP / OsqpEigen。详见 THIRD_PARTY_NOTICES.md。
+# kinodynamicAstar.cpp 仍不编译：上游自述全局搜索约 2 s，主链路不用（见 PATCHES.md）。
 ament_auto_add_library(${PROJECT_NAME} SHARED
   vendor/src/YAstar/yastar.cpp
+  vendor/src/MinimumSnapOsqp/minimumSnap.cpp
+  vendor/src/MinimumSnapOsqp/sfcSquare.cpp
   src/costmap_converter.cpp
   src/tdt_global_planner.cpp
+  src/tdt_smoother.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PUBLIC
@@ -36,7 +41,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 # ament_auto_add_library 内部通过 ament_target_dependencies() 使用了
 # target_link_libraries 的 plain 签名，这里必须保持一致（不能写 PUBLIC/PRIVATE），
 # 否则 CMake 报 "all uses ... must be either all-keyword or all-plain"。
-target_link_libraries(${PROJECT_NAME} Eigen3::Eigen)
+target_link_libraries(${PROJECT_NAME} Eigen3::Eigen OsqpEigen::OsqpEigen)
 ament_export_dependencies(Eigen3)
 
 # 上游头文件随包安装，便于阶段二接入 MinimumSnap / SfcSquare 与来源溯源。
@@ -57,6 +62,12 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_costmap_converter test/test_costmap_converter.cpp)
   target_link_libraries(test_costmap_converter ${PROJECT_NAME})
+
+  ament_add_gtest(test_sfc_grid test/test_sfc_grid.cpp)
+  target_link_libraries(test_sfc_grid ${PROJECT_NAME})
+
+  ament_add_gtest(test_sfc_origin test/test_sfc_origin.cpp)
+  target_link_libraries(test_sfc_origin ${PROJECT_NAME})
 
   ament_add_gtest(test_yastar_chain test/test_yastar_chain.cpp)
   target_link_libraries(test_yastar_chain ${PROJECT_NAME})
