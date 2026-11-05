@@ -98,6 +98,17 @@ private:
   float path_resample_step_{0.3f};
   /// 加密后的点数上限，防止病态输入（极长路径 + 极小步长）撑爆内存。
   int path_resample_max_points_{2000};
+
+  /// 折角圆弧化的切角长度（米）。0 表示不切角。
+  ///
+  /// MinimumSnap 对输入点是插值的，折线本身的尖角会被原样保留：实测一条
+  /// 545° 总转角的 YAstar 路径上出现 24 rad/m 的瞬时曲率（转弯半径 4 cm），
+  /// 底盘无法跟随，控制器会切内弯。用二次贝塞尔在拐点切角后曲率显著下降。
+  float corner_round_cut_{0.4f};
+  /// 只有转角大于该值（度）才切角，避免把近似直行的路径切出人为波动。
+  float corner_round_min_turn_deg_{25.0f};
+  /// 切角贝塞尔的采样步长（米）。
+  float corner_round_sample_step_{0.2f};
   /// "identity"（w=1）或 "tangent"（由相邻点求 yaw）。
   std::string orientation_mode_{"tangent"};
 };

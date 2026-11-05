@@ -597,6 +597,12 @@ smoother_server:
       # 切进膨胀层，check_for_collisions=true 时必然失败并原样返回。0 表示不加密。
       path_resample_step: 0.30                            # 加密步长（米），0 = 关闭
       path_resample_max_points: 2000                      # 加密后点数上限（防病态输入）
+      # 折角圆弧化：MinimumSnap 对输入点是插值的，折线尖角会被原样保留
+      # （实测 545° 总转角路径上出现 24 rad/m，转弯半径 4 cm，底盘跟不住）。
+      # cut 为切角长度（米），0 = 关闭；min_turn_deg 以下的小转折不切。
+      corner_round_cut: 0.40                             # 切角长度（米），0 = 关闭
+      corner_round_min_turn_deg: 25.0                    # 大于该转角（度）才切角
+      corner_round_sample_step: 0.20                     # 贝塞尔采样步长（米）
       min_points: 3                                       # 少于此点数不做平滑
       orientation_mode: "tangent"                         # 由相邻点求 yaw
 
