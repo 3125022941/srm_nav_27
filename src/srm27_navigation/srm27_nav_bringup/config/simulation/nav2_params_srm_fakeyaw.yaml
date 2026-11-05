@@ -71,7 +71,13 @@ ign_sim_pointcloud_tool:
     ang_res_y: 1.903225806451613  # (7+52) / (32-1) # 垂直角分辨率（度，须 = 视场/线数）
     min_range: 0.1                                 # 丢弃雷达近盲区内的点（米）
     max_range: 39.9                                # 丢弃40米无回波量程点（米）
-    scan_period: 0.0                               # GPU雷达整帧同时采样，逐点时间偏移为0
+    # 2026-11-05 曾试过 0.1（给帧内点时间跨度），**已回退**：
+    #   · 底盘自转 2 rad/s 时，这 0.1 s 的跨度会人为注入 ≈11.5° 的假旋转；
+    #   · 实测该轮航向误差均值恰好 −11.8°（峰值 51°），与这个数值吻合；
+    #   · 而平移精度的真正解药是 point_lio.point_filter_num（32→8，位移 6.5x→0.99x），
+    #     与逐点时间无关。
+    # Gazebo 的 GPU 雷达一帧是单次渲染成像，所有点同一时刻 —— 所以 0.0 才是物理正解。
+    scan_period: 0.0                              # GPU雷达整帧同时采样，逐点时间偏移为0
 
 point_lio:
   ros__parameters:
@@ -83,7 +89,12 @@ point_lio:
     #   实车（约 20 万点/秒）的 6 倍。按实车标的 8 会让 Point-LIO 跟不上（实测 odom
     #   只有 ~2.6 Hz，进而撞上 fake_vel_transform.odom_timeout=0.25s 与
     #   FollowPath.state_timeout=0.10s 两道闸门，车直接不动）。上实车改回 8。
-    point_filter_num: 32                                # 点云抽样间隔（仿真 32 / 实车 8）
+    # ★ 2026-11-05 实测修正：转换后的点云有 16,890 点/帧（原始 600×32=19,200），
+    #   而 point_filter_num=32 意味着 LIO 每帧只用 ~530 点 —— 这是"点云很稀"的真正来源
+    #   （不是转换工具，它只丢掉了约 12%）。改成实车同款 8：每帧约 2,100 点。
+    #   判据：user_test_log 里的"位移夸大倍数"（现 6.5x）是否下降；
+    #   同时盯 ros2 topic hz aft_mapped_to_init，若掉到 6 Hz 以下就回退到 16。
+    point_filter_num: 8                                 # 点云抽样间隔（原 32；实车 8）
     space_down_sample: True                             # 是否进行空间下采样
     filter_size_surf: 0.3                               # 平面特征体素（仿真 0.3 / 实车 0.2）
     filter_size_map: 0.3                                # 地图点云体素（仿真 0.3 / 实车 0.2）

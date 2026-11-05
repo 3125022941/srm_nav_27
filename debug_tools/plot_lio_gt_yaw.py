@@ -181,8 +181,24 @@ class Recorder(object):
         """没给 --namespace 时，自动找带命名空间的同名话题（如 /red_standard_robot1/xxx）。
 
         这样 `./debug_tools/plot_lio_gt_yaw.py` 直接就能用，不必每次敲 __ns:=...
+
+        注意：仿真刚起来时话题是**分批出现**的（Gazebo 先起、再 spawn 机器人、桥才建映射），
+        所以这里必须耐心等（默认 10 s），不能等 2 s 就下结论 —— 否则会出现
+        "明明在跑却报没数据"（实际是抢跑）。
         """
-        for _ in range(20):          # 等图发现，最多约 2 s
+        deadline = time.time() + max(1.0, self.args.discover_timeout)
+        announced = False
+        while time.time() < deadline:
+            rclpy.spin_once(self.node, timeout_sec=0.2)
+            names = list(dict(self.node.get_topic_names_and_types()))
+            if not announced and any(n.endswith("/" + topic_leaf) for n in names):
+                break
+            if not announced and time.time() > deadline - 8.0:
+                self.node.get_logger().info(
+                    "等待话题 /<ns>/%s 出现…（仿真刚起来时话题会分批出现，最多等 %.0f s）"
+                    % (topic_leaf, self.args.discover_timeout))
+                announced = True
+        for _ in range(3):
             rclpy.spin_once(self.node, timeout_sec=0.1)
         candidates = [
             name.rsplit("/", 1)[0].strip("/")
@@ -199,9 +215,15 @@ class Recorder(object):
                 "发现多个命名空间都有 %s: %s —— 请用 --namespace 指定"
                 % (topic_leaf, sorted(set(candidates))))
             return ""
+        names = sorted(dict(self.node.get_topic_names_and_types()))
         self.node.get_logger().warn(
-            "没发现 /<ns>/%s 这样的话题，按无命名空间处理；若话题确实带命名空间，请用 "
-            "--namespace 或 --ros-args -r __ns:=/xxx 指定" % topic_leaf)
+            "等了 %.0f s 仍没发现 /<ns>/%s。当前共有 %d 个话题，前 12 个是："
+            % (self.args.discover_timeout, topic_leaf, len(names)))
+        for n in names[:12]:
+            self.node.get_logger().warn("   %s" % n)
+        self.node.get_logger().warn(
+            "若仿真刚启动，请等 Gazebo 里的车出现后再运行；若话题确实带命名空间，"
+            "用 --namespace 或 --ros-args -r __ns:=/xxx 指定")
         return ""
 
     # ---- 回调：只存最新值，采样由定时器统一做（三条曲线天然同时间轴） ----
@@ -513,6 +535,9 @@ def main(argv=None):
     parser.add_argument("--raw-topic", default="lidar_odometry", help="原始雷达里程计话题")
     parser.add_argument("--with-raw", action="store_true", help="同时画 lidar_odometry 的 yaw")
     parser.add_argument("--imu-topic", default="livox/imu", help="IMU 话题（用于看重力的泄漏）")
+    parser.add_argument(
+        "--discover-timeout", type=float, default=10.0,
+        help="自动找命名空间时最多等多久（秒）。仿真刚起来时话题会分批出现，默认 10 s")
     parser.add_argument("--namespace", default="", help="命名空间，如 red_standard_robot1")
     parser.add_argument("--demo", action="store_true", help="用合成数据出图（不需要 ROS）")
     parser.add_argument("--headless", action="store_true", help="不弹窗，只存文件")
