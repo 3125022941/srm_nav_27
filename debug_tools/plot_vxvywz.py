@@ -87,12 +87,13 @@ import math
 import os
 import re
 import sys
-import tempfile
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from _common import prepare_matplotlib_env, print_header_help, setup_cjk_font
 
 CHANNELS = ("vx", "vy", "wz")
 TITLES = {"vx": "vx  [m/s]", "vy": "vy  [m/s]", "wz": "wz  [rad/s]"}
@@ -174,43 +175,6 @@ def load_protocol_config(path):
     if not loaded:
         return PROTOCOL_DEFAULTS, f"{path.name} 里没找到这些键，使用内置默认值"
     return values, f"参数来自 {path}"
-
-
-def prepare_matplotlib_env():
-    """MPLCONFIGDIR 默认在 ~/.config，容器/只读家目录下会刷警告，提前挪走。"""
-    if os.environ.get("MPLCONFIGDIR"):
-        return
-    candidate = Path.home() / ".config" / "matplotlib"
-    try:
-        candidate.mkdir(parents=True, exist_ok=True)
-        if os.access(candidate, os.W_OK):
-            return
-    except OSError:
-        pass
-    fallback = Path(tempfile.gettempdir()) / f"matplotlib-{os.getuid()}"
-    try:
-        fallback.mkdir(parents=True, exist_ok=True)
-        os.environ["MPLCONFIGDIR"] = str(fallback)
-    except OSError:
-        pass
-
-
-def setup_cjk_font():
-    """图上要写中文，挑一个装了的 CJK 字体，找不到就退回 ASCII 文案。"""
-    from matplotlib import font_manager
-
-    installed = {font.name for font in font_manager.fontManager.ttflist}
-    for name in (
-        "Noto Sans CJK JP", "Noto Sans CJK SC", "Noto Sans CJK TC",
-        "Droid Sans Fallback", "WenQuanYi Zen Hei", "WenQuanYi Micro Hei",
-    ):
-        if name in installed:
-            import matplotlib
-            matplotlib.rcParams["font.sans-serif"] = [name, "DejaVu Sans"]
-            # CJK 字体里没有 U+2212 的负号字形，负号会变方块
-            matplotlib.rcParams["axes.unicode_minus"] = False
-            return name
-    return ""
 
 
 # =============================================================
@@ -768,14 +732,8 @@ class Plotter:
 # 帮助 / 参数
 # =============================================================
 def print_help():
-    """把文件头注释打出来，和项目里其它脚本的 --help 行为保持一致。"""
-    with open(__file__, encoding="utf-8") as stream:
-        for line in stream:
-            if line.startswith("#!") or "coding:" in line:   # 跳过 shebang 与编码声明
-                continue
-            if not line.startswith("#"):
-                break
-            print(line[2:].rstrip())
+    """把文件头注释打出来（公共实现，见 _common.py）。"""
+    print_header_help(__file__)
 
 
 def build_settings(argv):

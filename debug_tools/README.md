@@ -8,50 +8,11 @@
 | --- | --- | --- |
 | `plot_vxvywz.py` | 底盘 vx/vy/wz 波形：串口发送 + 下位机反馈，共 6 条曲线 | 可用（反馈侧接口预留） |
 | `plot_lio_gt_yaw.py` | **LIO 算的车头朝向 vs Gazebo 真值**：yaw 曲线 + 误差 + x-y 轨迹 + 速度符号，4 个面板 | 可用 |
+| `system_monitor.py` | 本机占用：CPU/内存/swap/温度/磁盘/网络 + **导航栈分组统计** + 最吃 CPU 的进程 | 可用 |
 
----
-
-## 2. `plot_lio_gt_yaw.py` —— LIO 航向 vs 真值
-
-回答一个问题：**"LIO 算出来的车头朝向，和 Gazebo 真值差多少、从什么时候开始差"**。
-
-四个面板（同一时间轴）：
-
-| 面板 | 内容 | 怎么读 |
-| --- | --- | --- |
-| ① yaw 曲线 | 真值 `chassis_odometry_gt` 与导航用的 `/odometry` 两条线叠一起（`--with-raw` 再加一条 `lidar_odometry`）；曲线做了 unwrap，跨越 ±180° 也不会断 | 两条线离得越远，方向越错 |
-| ② yaw 误差 | 导航 − 真值，折到 ±180°，带 ±2° 绿带 | 贴着 0 = 换算正确；在"开始动/云台转起来"之后才拉开 = LIO 动态下配准不住 |
-| ③ x-y 轨迹 | 真值轨迹 vs 导航轨迹 | 导航画出**小圆**而真值不动 → 云台离轴杠杆臂（本车 ≈13 cm）残差 |
-| ④ 速度符号 | `cmd_vel_sim.linear.x` 与 `/odometry.twist.x` | 两条线长期**不同号** → 速度方向/坐标约定反了（"前进变后退"的另一半原因） |
-
-用法：
-
-```bash
-# 不用仿真，先看工具本身（合成数据里有漂移、跳变和一个 13 cm 小圆）
-./debug_tools/plot_lio_gt_yaw.py --demo --headless
-
-# 默认输出到 <工程根>/user_test_log/，文件名带时间戳，不会互相覆盖
-#   user_test_log/lio_yaw_20261105_0232.png
-#   user_test_log/lio_yaw_20261105_0232.csv
-
-# 真机/仿真录制：与 start_sim_nav.sh 同时跑，结束时出图 + 统计
-# 默认一直录：想停的时候按 Ctrl-C，已录部分照样出图（也默认存进 user_test_log/）
-./debug_tools/plot_lio_gt_yaw.py --headless
-./debug_tools/plot_lio_gt_yaw.py --ros-args -r __ns:=/red_standard_robot1 --with-raw
-
-# 想固定时长也可以（到点自动出图）
-./debug_tools/plot_lio_gt_yaw.py --duration 60 --headless --save /tmp/lio_yaw.png
-
-# 只看数字不出图
-./debug_tools/plot_lio_gt_yaw.py --duration 30 --stats-only
-```
-
-输出：PNG + 同名 `.csv`（每行一个采样点，默认都在 `user_test_log/`），以及一段统计：平均/最大误差、
-单帧跳变次数、**命令与 LIO 速度同号比例**（<70% 基本就是方向反了）。
-
-典型复现流程：终端 A 起 `start_sim_nav.sh ... --lio`，终端 B 跑本工具，终端 C 发目标；
-车"往后走"的那几秒正好落在图上，②④ 两个面板能直接把责任落到具体那一段。
-
+`plot_vxvywz.py` 与 `system_monitor.py` 共用 `_common.py`（matplotlib 配置目录、
+中文字体、CSV 落盘、`-h` 输出），改公共行为只改那一处；
+`plot_lio_gt_yaw.py` 是后加的，自带一份同样的样板，没依赖 `_common.py`。
 
 ---
 
@@ -169,7 +130,160 @@ source install/setup.bash            # 只用到标准消息时可以省
 
 ---
 
-## 2. 2026-11-04 的配套改动
+---
+
+## 2. `plot_lio_gt_yaw.py` —— LIO 航向 vs 真值
+
+回答一个问题：**"LIO 算出来的车头朝向，和 Gazebo 真值差多少、从什么时候开始差"**。
+
+四个面板（同一时间轴）：
+
+| 面板 | 内容 | 怎么读 |
+| --- | --- | --- |
+| ① yaw 曲线 | 真值 `chassis_odometry_gt` 与导航用的 `/odometry` 两条线叠一起（`--with-raw` 再加一条 `lidar_odometry`）；曲线做了 unwrap，跨越 ±180° 也不会断 | 两条线离得越远，方向越错 |
+| ② yaw 误差 | 导航 − 真值，折到 ±180°，带 ±2° 绿带 | 贴着 0 = 换算正确；在"开始动/云台转起来"之后才拉开 = LIO 动态下配准不住 |
+| ③ x-y 轨迹 | 真值轨迹 vs 导航轨迹 | 导航画出**小圆**而真值不动 → 云台离轴杠杆臂（本车 ≈13 cm）残差 |
+| ④ 速度符号 | `cmd_vel_sim.linear.x` 与 `/odometry.twist.x` | 两条线长期**不同号** → 速度方向/坐标约定反了（"前进变后退"的另一半原因） |
+
+用法：
+
+```bash
+# 不用仿真，先看工具本身（合成数据里有漂移、跳变和一个 13 cm 小圆）
+./debug_tools/plot_lio_gt_yaw.py --demo --headless
+
+# 默认输出到 <工程根>/user_test_log/，文件名带时间戳，不会互相覆盖
+#   user_test_log/lio_yaw_20261105_0232.png
+#   user_test_log/lio_yaw_20261105_0232.csv
+
+# 真机/仿真录制：与 start_sim_nav.sh 同时跑，结束时出图 + 统计
+# 默认一直录：想停的时候按 Ctrl-C，已录部分照样出图（也默认存进 user_test_log/）
+./debug_tools/plot_lio_gt_yaw.py --headless
+./debug_tools/plot_lio_gt_yaw.py --ros-args -r __ns:=/red_standard_robot1 --with-raw
+
+# 想固定时长也可以（到点自动出图）
+./debug_tools/plot_lio_gt_yaw.py --duration 60 --headless --save /tmp/lio_yaw.png
+
+# 只看数字不出图
+./debug_tools/plot_lio_gt_yaw.py --duration 30 --stats-only
+```
+
+输出：PNG + 同名 `.csv`（每行一个采样点，默认都在 `user_test_log/`），以及一段统计：平均/最大误差、
+单帧跳变次数、**命令与 LIO 速度同号比例**（<70% 基本就是方向反了）。
+
+典型复现流程：终端 A 起 `start_sim_nav.sh ... --lio`，终端 B 跑本工具，终端 C 发目标；
+车"往后走"的那几秒正好落在图上，②④ 两个面板能直接把责任落到具体那一段。
+
+
+---
+
+## 3. `system_monitor.py` —— 电脑占用
+
+![本机占用示例](example_system.png)
+
+> 上图是同步跑合成负载（6 个进程烧 CPU + 1 个狂写磁盘，12 s 后停止）时录的：
+> 蓝色粗线是整机 CPU，细灰线是 16 个线程各自的占用，紫色点划线是 CPU 温度（右轴）。
+> 进程摘要在**图顶部一行**，不再压在曲线上（老版本画在图里，正好会盖住 CPU 冲高那一段）。
+
+**最关心的一条**：图顶部与底部状态行里的 **"导航栈合计 x.xx 核"**——它把
+仿真 Gazebo / RViz / Nav2 / 定位里程计 / 雷达驱动 / 底盘串口 六组进程加在一起，
+回答"跑这套导航到底占了多少机器"；远程桌面、本工具这类进程单独列，不算进导航的账。
+
+四个子图（`--text` 时是一屏），回答"卡在哪一层"：
+
+| 指标 | 看什么 |
+| --- | --- |
+| CPU | 总占用（粗线）+ 每个核心（细灰线）+ 温度（右轴） |
+| 内存 | 物理内存 + swap 百分比 |
+| 磁盘 | 读 / 写 MB/s（累计计数求差得到） |
+| 网络 | 收 / 发 MB/s（DDS 狂发时这里会顶起来） |
+| 进程表 | CPU% 前 N 个，单行显示在**图顶部**（原来画在图里，会把 CPU 曲线盖住）；`--match` 可以只看 ROS 相关进程 |
+| 导航栈分组 | 六组加总 + 各组分解；终端模式另有一张含内存/进程数的分组表 |
+
+### 3.1 用法
+
+```bash
+# 实时窗口
+./debug_tools/system_monitor.py
+
+# 纯终端（ssh 上去、没有显示器时会自动切到这个模式）
+./debug_tools/system_monitor.py --text
+
+# 只打一屏就退出：现场最常用，"现在到底谁在吃 CPU"
+./debug_tools/system_monitor.py --text --once
+
+# 只看导航相关进程（命令行/进程名里包含任一关键字即可）
+./debug_tools/system_monitor.py --text --match nav2,point_lio,rviz,gazebo
+
+# 跑一分钟，顺便存图和 CSV
+./debug_tools/system_monitor.py --duration 60 --window 60 --save /tmp/sys.png --csv /tmp/sys.csv
+```
+
+依赖只有 `python3-psutil`（`sudo apt install python3-psutil`），**不需要 ROS**，
+所以在别的机器上单跑也可以。
+
+终端模式的分组表长这样（数值是示例）：
+
+```text
+ 按分组（CPU% 相对单核，100% = 1 核）：
+   分组               CPU%      核       内存    进程
+   仿真 Gazebo       119.3   1.19    1.7GB     3
+   远程桌面            110.2   1.10  476.8MB     1
+   Nav2 导航栈         92.1   0.92    2.0GB    14
+   RViz              60.4   0.60  858.3MB     1
+   定位/里程计          30.2   0.30  572.2MB     4
+   雷达驱动             12.0   0.12  190.7MB     1
+   底盘串口              3.0   0.03   95.4MB     1
+   导航栈合计           317.0   3.17    5.3GB    24   ← 占整机 20%
+```
+
+分组规则写在 `system_monitor.py` 的 `PROCESS_GROUPS` 里（按命令行关键字归类，
+先匹配先得）。换了节点名/启动方式导致归类不对时，改那张表即可。
+
+### 3.2 参数
+
+| 参数 | 默认 | 说明 |
+| --- | --- | --- |
+| `--text` | 关 | 纯终端输出；无 `DISPLAY` 且没给 `--save` 时自动开启 |
+| `--once` | 关 | 只采一屏就退出（配 `--text`） |
+| `--procs` | `6` | 进程表行数，`0` = 不采集进程表（**也就没有导航栈合计**） |
+| `--procs-csv` | 空 | 每次进程扫描写一份 CSV（t/分组/pid/cpu/rss/命令），用于事后回溯 |
+| `--match` | 空 | 进程过滤关键字，逗号分隔或重复给 |
+| `--interval` | `1.0` | 终端模式刷新周期（秒） |
+| `--window` | `60` | 波形时间窗（秒） |
+| `--sample-hz` | `5` | 采样频率 |
+| `--plot-hz` | `1` | 窗口刷新频率（调高会让工具自己吃 CPU；2 Hz 约为 1 Hz 的两倍开销） |
+| `--duration` | `0` | 运行时长，0 = 一直跑到关窗口 / Ctrl-C |
+| `--csv` | 空 | 录 CSV（每行一个采样点，含 CPU/内存/温度/磁盘/网络/load） |
+| `--save` | 空 | 退出时存 PNG |
+| `--headless` | 自动 | 没有 `DISPLAY` 时自动开启 |
+| `--disk-path` | `/` | 统计哪个挂载点的剩余空间 |
+| `--iface` | 空（全部） | 只统计哪些网卡，逗号分隔或重复给；默认含 `lo` |
+
+### 3.3 判读要点
+
+- **"导航栈合计"是六组之和，不含远程桌面和本工具**。所以"整机 CPU 70%"
+  与"导航栈 8.2 核（51%）"是两种口径：前者是整机平均，后者是核数，两者之差
+  就是远程桌面/工具/系统自身的开销。
+- **进程 CPU% 是 psutil 的口径：相对"一个核"**。多线程进程会超过 100%
+  （16 线程机器满载可达 1600%），不是整机占比。
+- **swap 长期贴满**（本机历史上常年 ~99%）：物理内存不够，整机会变慢，
+  这种"卡"和控制器参数没关系，先加内存/关掉不用的进程。
+- **温度 ≥ 90°C**：CPU 在降频，同一份代码会突然变慢，波形上表现为
+  控制器周期抖动 —— 别去调参，先解决散热/降负载。
+- **磁盘写持续很高**：先看是不是自己在录包（`ros2 bag record` 本身就吃满磁盘），
+  别把它当成系统问题。
+- **网络收发异常高但没在传文件**：先看它是哪张网卡。**默认统计所有网卡（含 `lo`）**，
+  而单机跑 ROS 2 + Gazebo 时 DDS 的点云/时钟全走回环，几十 MB/s 很常见 ——
+  状态行会标"其中 lo 回环 x/y"，想只看真实网卡就 `--iface wlo1`；
+  lo 上真的很高时再考虑调 DDS（共享内存传输、降点云频率）。
+- **网络收 ≈ 发 且数值一样大**：基本都是回环（发出去多少就收回来多少），
+  不代表网线/无线被打满。
+- 工具自身开销：波形模式约占单核 15%（1 Hz 刷新、默认窗口），终端模式约 2%。
+  只想快速判断"谁在吃 CPU"用 `--text --once` 最省。
+
+---
+
+## 4. 2026-11-04 的配套改动
 
 为了"图上看到的就是下位机收到的"，`src/srm27_nav_protocol/config/srm27_nav_protocol.yaml`
 里的速度对齐系数被去掉：
@@ -188,7 +302,7 @@ source install/setup.bash            # 只用到标准消息时可以省
 
 ---
 
-## 3. 常见问题
+## 5. 常见问题
 
 | 现象 | 排查 |
 | --- | --- |
@@ -198,3 +312,5 @@ source install/setup.bash            # 只用到标准消息时可以省
 | 中文显示成方块 | 缺 CJK 字体；脚本会自动挑 Noto/Droid Sans Fallback，装一个 CJK 字体即可 |
 | 弹不出窗口 | 没有 `DISPLAY`：用 `--headless --save xx.png` |
 | Ctrl-C 后 CSV 不完整 | CSV 每秒落盘一次；`kill -9` 仍会丢最后 1 秒，正常 Ctrl-C 不会 |
+| 系统占用里进程表只有几个进程 | 容器/受限环境（hidepid、PID 命名空间）下 `psutil` 只能看到本命名空间的进程；整机 CPU 仍是对的 |
+| 系统占用里磁盘/网络显示 "—" | 速率是"两次采样求差"，第一个采样点没有基准；`--once` 会自动等第二个点，正常不会出现 |

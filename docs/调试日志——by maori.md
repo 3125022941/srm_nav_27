@@ -497,3 +497,7 @@ ros2 run pcl_ros pcd_to_pointcloud --ros-args \
 ```bash
 ./debug_tools/plot_lio_gt_yaw.py --headless
 ```
+### 示波工具--电脑性能
+```bash
+./debug_tools/system_monitor.py
+```
