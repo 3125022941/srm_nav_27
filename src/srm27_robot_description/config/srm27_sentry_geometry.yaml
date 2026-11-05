@@ -102,7 +102,10 @@ lidar:
   #     · 现在 600×32 @10 Hz：同样点率、单帧更密、频率贴近实车，LIO 匹配更稳。
   #   **线数必须保 32**：削到 16 线会让地形图变稀，规划出现"目标全不可达"。
   #   改这里必须同步改 nav2_params 里 ign_sim_pointcloud_tool 的 n_scan/horizon_scan。
-  update_rate: 10
+  # ★ 2026-11-05 实测：10 Hz 时底盘 2 rad/s 自转每帧要转 11.5°，
+  #   LIO 无论是否做逐点去畸变都只能救住"航向"或"平移"之一（见三次实测汇总）。
+  #   改 20 Hz 后每帧只转 5.7°，两个方向都能兼顾；代价是 LIO 负载翻倍。
+  update_rate: 20
   samples: 600
   horizontal_min_angle: 0.0
   horizontal_max_angle: 6.2831852
