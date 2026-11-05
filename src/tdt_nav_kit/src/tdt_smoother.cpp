@@ -208,6 +208,30 @@ void TdtSmoother::configure(
   path_resample_max_points_ =
     static_cast<int>(node->get_parameter(p + "path_resample_max_points").as_int());
   orientation_mode_ = node->get_parameter(p + "orientation_mode").as_string();
+
+  // 配置自检：backend 与路径加密是强耦合的，只改一处会让平滑静默失效
+  // （solve 失败 → 原样返回路径 → 行为树看不出来，只表现为"车不动"）。
+  // 这里在 configure 阶段就把话说清楚，避免以后再踩。
+  if (path_resample_step_ <= 1e-3f && backend_ != "close") {
+    RCLCPP_WARN(
+      node->get_logger(),
+      "TdtSmoother: backend=%s 但 path_resample_step=%.2f（未加密）。稀疏路径"
+      "（YAstar 段长可达数米）下该后端会 OSQP 不收敛并原样返回路径，"
+      "表现为平滑静默失效。请把 path_resample_step 设为 0.30，或改用 backend=close。",
+      backend_.c_str(), static_cast<double>(path_resample_step_));
+  }
+  if (backend_ == "corridor") {
+    RCLCPP_WARN(
+      node->get_logger(),
+      "TdtSmoother: backend=corridor 在 RMUC 2026 仿真地图上实测不收敛"
+      "（加密到 1191 点后仍失败，408 ms），建议改用 backend=path。");
+  }
+  if (path_resample_max_points_ < 100) {
+    RCLCPP_WARN(
+      node->get_logger(),
+      "TdtSmoother: path_resample_max_points=%d 过小，长路径会被截断，建议 >= 500。",
+      path_resample_max_points_);
+  }
 }
 
 void TdtSmoother::cleanup()
