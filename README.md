@@ -733,6 +733,7 @@ maps/<名字>.yaml                                                     # 或直�
 | `--slam` | `slam_toolbox` | 否 | 边跑边建图，不需要先验地图 |
 | `--reloc` | `small_gicp_relocalization` | 先验 PCD | 与先验点云做 GICP 配准 |
 | `--lio` | 静态 TF | 否 | 只用 Point-LIO 里程计（`use_lio_odometry:=True`），**实车推荐**；`start_real_nav.sh` 的默认方式 |
+| `--lio`（仿真默认 ZLIO） | 静态 TF | 否 | **仿真：`--lio` 自 2026-11-05 起默认由 ZLIO（z-localization 的 `frontend` 包）产生里程计**，坐标系改写与换代锚定由 `zlio_bridge` 承担、`loam_interface` 不启动。需先构建 `localization_interfaces` + `frontend`（没构建时脚本会自动退回 Point-LIO 并告警）。回退：`--lio-frontend point_lio`。见 [实施方案](<docs/仿真LIO前端替换Z-LIO实施方案(ai).md>) 与 [实施记录](<docs/仿真LIO前端替换Z-LIO实施记录(ai).md>) |
 | `--static` | 静态 TF | 先验栅格图 | 只加载栅格图、没有任何里程计来源，仅当车体模块自己发 `odom → base_link` 时可用 |
 | 默认 | 静态 TF | 先验栅格图 | `map_server` 加载 PGM，需要外部里程计；SRM 仿真下由 `simulation_ground_truth_odometry` 提供 `odom → base_link`，即 `start_sim_nav.sh` 使用的模式 |
 

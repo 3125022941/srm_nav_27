@@ -501,3 +501,11 @@ ros2 run pcl_ros pcd_to_pointcloud --ros-args \
 ```bash
 ./debug_tools/system_monitor.py
 ```
+
+### 1105脚本参数
+```bash
+./script/start_sim_nav.sh                            # 两个都不转
+./script/start_sim_nav.sh --chassis-spin             # 底盘 2.0
+./script/start_sim_nav.sh --gimbal-spin              # 云台 -1.0
+./script/start_sim_nav.sh --chassis-spin 3 --gimbal-spin 0.5   # 自己给转速
+```

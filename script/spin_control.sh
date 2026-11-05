@@ -21,12 +21,25 @@
 #   script/spin_control.sh status         查看请求/实际转速/进线状态
 #
 # 环境变量: ROBOT_NS (默认 red_standard_robot1), SPIN_MAX_WZ (默认 2.0 rad/s)
+#           SPIN_CMD_TOPIC  自转请求发到哪个话题。默认 /<ns>/rotation_cmd ——
+#           start_sim_nav.sh --chassis-spin 用的就是它（MINCO 在听）。
+#           start_sim_slam.sh --chassis-spin 会把它指到 /<ns>/cmd_vel_nav_fake：
+#           建图栈没有 MINCO（rotation_cmd 无人订阅），只能从 fakeyaw 链入口注入，
+#           经 fake_vel_transform -> srm_cmd_mux -> cmd_vel_sim 到底盘。
+#           注意 status 的 1)/3) 段是 rotation_cmd 专用（MINCO 参数与诊断），
+#           换话题后那两段只作对照。
 set -euo pipefail
 
 NS="${ROBOT_NS:-red_standard_robot1}"
-CMD_TOPIC="/${NS}/rotation_cmd"
-PID_FILE="${TMPDIR:-/tmp}/srm27_spin_control_${NS}.pid"
+CMD_TOPIC="${SPIN_CMD_TOPIC:-/${NS}/rotation_cmd}"
 MAX_WZ="${SPIN_MAX_WZ:-2.0}"
+# PID 文件按话题区分：rotation_cmd 沿用旧名字（兼容既有用法），其它话题加后缀，
+# 免得导航与建图两套自转发布器互相 kill。
+if [ "$CMD_TOPIC" = "/${NS}/rotation_cmd" ]; then
+  PID_FILE="${TMPDIR:-/tmp}/srm27_spin_control_${NS}.pid"
+else
+  PID_FILE="${TMPDIR:-/tmp}/srm27_spin_control_${NS}_$(printf '%s' "$CMD_TOPIC" | tr -c 'A-Za-z0-9' '_').pid"
+fi
 
 _ws_setup() {
   local ws="${SRM27_WS_DIR:-$HOME/srm_nav_27}"
@@ -81,7 +94,7 @@ case "$cmd" in
       >/dev/null 2>&1 &
     echo $! > "$PID_FILE"
     subs="$(timeout 5 ros2 topic info "$CMD_TOPIC" 2>/dev/null | sed -n 's/^Subscription count: //p' || true)"
-    echo "[自转] 请求 ${clamped} rad/s 已发布 (PID $(cat "$PID_FILE"))，minco spin_request 应在 0.3 s 内变新鲜。"
+    echo "[自转] 请求 ${clamped} rad/s 已发布到 ${CMD_TOPIC} (PID $(cat "$PID_FILE"))，0.3 s 内应生效。"
     if [ -z "${subs:-}" ]; then
       echo "[警告] 查不到 ${CMD_TOPIC} 的订阅者 —— 栈没起 / 域不同 / ros2 daemon 缓存旧信息。"
     elif [ "$subs" = "0" ]; then
@@ -89,12 +102,13 @@ case "$cmd" in
 [警告] ${CMD_TOPIC} 现在**没有任何订阅者**，请求发出去也没人听。常见原因：
         · MINCO 的 spin_request.topic 不是 rotation_cmd（用 -c minco 或 -p …minco.yaml 时
           会退回代码默认值 rotation_velocity）
+        · 话题指错了（SPIN_CMD_TOPIC=${CMD_TOPIC}）
         · 命名空间不一致（本脚本 ROBOT_NS=${NS}）
         · 栈和本终端不在同一个 ROS_DOMAIN_ID
        逐条确认: $0 status
 WARN
     else
-      echo "[提示] ${CMD_TOPIC} 订阅者 ${subs} 个（MINCO 在听）。停止: $0 off"
+      echo "[提示] ${CMD_TOPIC} 订阅者 ${subs} 个（MINCO / fake_vel_transform 在听）。停止: $0 off"
     fi
     ;;
   off)
@@ -108,6 +122,10 @@ WARN
   status)
     _ws_setup
     echo "===== 1) 模式与话题（决定请求会不会被消费） ====="
+    echo "  请求话题               = ${CMD_TOPIC}"
+    if [ "$CMD_TOPIC" != "/${NS}/rotation_cmd" ]; then
+      echo "  （自定义话题：MINCO 只订阅 rotation_cmd，下面两项仅作对照）"
+    fi
     # nav2 节点在机器人命名空间下（/red_standard_robot1/controller_server）；根命名空间的
     # 部署才用 /controller_server。两种都试，否则永远"读不到"。
     ctrl_node=""

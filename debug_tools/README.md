@@ -7,7 +7,7 @@
 | 工具 | 用途 | 状态 |
 | --- | --- | --- |
 | `plot_vxvywz.py` | 底盘 vx/vy/wz 波形：串口发送 + 下位机反馈，共 6 条曲线 | 可用（反馈侧接口预留） |
-| `plot_lio_gt_yaw.py` | **LIO 算的车头朝向 vs Gazebo 真值**：yaw 曲线 + 误差 + x-y 轨迹 + 速度符号，4 个面板 | 可用 |
+| `plot_lio_gt_yaw.py` | **LIO 算的车头朝向 vs Gazebo 真值**：yaw 曲线 + 误差 + x-y 轨迹 + 速度符号（共 5 个面板）；加 `--zlio` 再多 3 个面板看里程计前端换成 ZLIO 之后的效果 | 可用 |
 | `system_monitor.py` | 本机占用：CPU/内存/swap/温度/磁盘/网络 + **导航栈分组统计** + 最吃 CPU 的进程 | 可用 |
 
 `plot_vxvywz.py` 与 `system_monitor.py` 共用 `_common.py`（matplotlib 配置目录、
@@ -136,7 +136,14 @@ source install/setup.bash            # 只用到标准消息时可以省
 
 回答一个问题：**"LIO 算出来的车头朝向，和 Gazebo 真值差多少、从什么时候开始差"**。
 
-四个面板（同一时间轴）：
+> **里程计前端换 ZLIO 之后**（2026-11-05 起 `--lio` 默认走 ZLIO），先按 §2.1 加 `--zlio` 跑，
+> 三件事一眼可见：位移夸大倍数、`registered_scan` 点数/帧、`T_off` 是否恒定。
+
+图面约定（2026-11-05 调整）：**所有文字都在轴外** —— 标题只留"编号 + 名字"，
+图例排在每个面板上方那一行的右侧，长解释统一收到**图底图注**里，曲线区域里不放任何
+文字。要一张只有曲线的干净图就加 `--no-caption`（解释改打到终端）。
+
+五个面板（同一时间轴）：
 
 | 面板 | 内容 | 怎么读 |
 | --- | --- | --- |
@@ -144,6 +151,7 @@ source install/setup.bash            # 只用到标准消息时可以省
 | ② yaw 误差 | 导航 − 真值，折到 ±180°，带 ±2° 绿带 | 贴着 0 = 换算正确；在"开始动/云台转起来"之后才拉开 = LIO 动态下配准不住 |
 | ③ x-y 轨迹 | 真值轨迹 vs 导航轨迹 | 导航画出**小圆**而真值不动 → 云台离轴杠杆臂（本车 ≈13 cm）残差 |
 | ④ 速度符号 | `cmd_vel_sim.linear.x` 与 `/odometry.twist.x` | 两条线长期**不同号** → 速度方向/坐标约定反了（"前进变后退"的另一半原因） |
+| ⑤ 姿态 roll/pitch | 真值 roll/pitch、导航 roll/pitch（被 planarize 清零，恒≈0）、**ZLIO 原始 roll/pitch**、**bridge roll/pitch** | 后两条是识别「odom 系被转了一个安装角」的关键：正确时两者都 ≈ 雷达安装倾角（仿真 30° roll）。若 bridge 比 raw 多出约 30° → `T_off` 少乘了 `R_0⁻¹`（见实施记录 §5.5）。⚠ 导航那条线被 `planarize()` 清零，**看不出**这种倾斜 |
 
 用法：
 
@@ -165,6 +173,9 @@ source install/setup.bash            # 只用到标准消息时可以省
 
 # 只看数字不出图
 ./debug_tools/plot_lio_gt_yaw.py --duration 30 --stats-only
+
+# 图面只要曲线（不画图底图注，解释改打到终端）
+./debug_tools/plot_lio_gt_yaw.py --duration 30 --save /tmp/lio.png --no-caption
 ```
 
 输出：PNG + 同名 `.csv`（每行一个采样点，默认都在 `user_test_log/`），以及一段统计：平均/最大误差、
@@ -172,6 +183,66 @@ source install/setup.bash            # 只用到标准消息时可以省
 
 典型复现流程：终端 A 起 `start_sim_nav.sh ... --lio`，终端 B 跑本工具，终端 C 发目标；
 车"往后走"的那几秒正好落在图上，②④ 两个面板能直接把责任落到具体那一段。
+
+### 2.1 `--zlio`：里程计前端换成 ZLIO 之后看什么
+
+`--lio` 现在默认由 ZLIO（z-localization 的 `frontend` 包）产生里程计，坐标系改写与换代锚定由
+`zlio_bridge` 负责。上面 5 个面板对"谁产生里程计"是不敏感的，所以加 3 个专属面板：
+
+| 面板 | 内容 | 怎么读 |
+| --- | --- | --- |
+| ⑥ 累计位移 | 真值 / 导航用 / ZLIO 原始 三条累计路程，标题里直接给出 **★ 位移夸大倍数 = 导航 ÷ 真值**（详细解释在图底图注 ⑥） | Point-LIO 仿真基线是 6.5× / 8.0× / 10.7×；ZLIO 若也在 3~10 倍，第一嫌疑是 `point_time_scale`（把秒当纳秒 → 去畸变失效）。这个倍数**越小越好**，接近 1.0 才叫能用来定位 |
+| ⑦ 点数/帧 + 匹配点 + 频率 | `registered_scan` 每帧点数、`zlio_bridge/matches`（匹配面观测点数，紫色）在左轴，频率在右轴；虚线 30 = `min_matches_warn` | ZLIO 输出的是**自适应采样后**的点（1000~4000），Point-LIO 的 `cloud_registered` 约 16,890 点/帧。点数掉太多时 `terrain_analysis` 的地形图会变稀，表现为"避障没坏但明显迟钝"；**matches 掉到几十以下**则是几何退化（正对单面墙/空旷），此时平移方向不可观、位姿开始靠猜 —— "撞墙后飞掉"那一类故障就是从这里开始的 |
+| ⑧ T_off 一致性 | `T_off(k) = T_bridge(k) · T_原始(k)⁻¹` 的 yaw 与 \|平移\| | bridge 只查一次 TF，所以这两条线必须**恒定**。yaw 均值应等于 URDF 里 `base_link ← front_mid360` 的安装角（仿真约 63°，另带 30° roll）。⚠ 必须用 **bridge 的 `lidar_odometry`**（修正后的雷达位姿）配原始位姿；用 `/odometry`（车体位姿）配会画出**每转一圈一个锯齿**——两者之间还差一个随云台转动的 `T_base←lidar`。工具默认已用 `--bridge-topic lidar_odometry` |
+
+![--zlio 示波示例](example_zlio.png)
+
+> 上图是 `--zlio --demo` 的合成数据：⑥ 里位移夸大 3.05×（真值蓝线贴底、导航/原始在上），
+> ⑦ 点数稳定在 1200、频率 19~19.5 Hz，⑧ 的 `T_off` 是两条平线（yaw 63°、|t| 60 mm）——
+> 这才是正确实现的样子。第 12 s 那条紫色点线是换代，位姿**没有**跳变（锚定生效）。
+
+另外 ②⑥⑦⑧ 上的**紫色点线 = 换代（epoch 变化）**：`zlio_bridge/epoch` 每次换代发一个值。
+epoch 变了而位姿**跳一大截** = 锚定没生效，`terrain_analysis` 的地形图会整体错位
+（实施方案 §4.3 的必做项）。
+
+```bash
+# 先自检工具（不需要仿真）：造一份位移夸大 3×、~1500 点/帧、T_off 恒定、第 12 s 换代的数据
+./debug_tools/plot_lio_gt_yaw.py --zlio --demo --headless
+
+# 真实录制（与 start_sim_nav.sh 同时跑；默认文件落在 user_test_log/zlio_scope_<时间>.png）
+./debug_tools/plot_lio_gt_yaw.py --zlio --headless
+./debug_tools/plot_lio_gt_yaw.py --zlio --duration 60 --headless --save /tmp/zlio_scope.png
+./debug_tools/plot_lio_gt_yaw.py --zlio --duration 60 --stats-only     # 只要数字
+
+# 话题名与默认不同时（默认按 <ns>/ 前缀解析，自动识别命名空间）
+./debug_tools/plot_lio_gt_yaw.py --zlio --ros-args -r __ns:=/red_standard_robot1 \
+    --raw-topic zlio/lidar_odometry --scan-topic registered_scan --epoch-topic zlio_bridge/epoch
+```
+
+统计会多打印这几行（`--stats-only` 也有）：
+
+```text
+T_off 一致性  : yaw  +63.00° ± 0.035°, |t| 60.0 ± 0.7 mm
+点云点数/帧   : 均值 1206, 最小 900, 最大 1500
+扫描 Hz         : 均值 19.5 Hz     桥接 odom Hz : 均值 19.0 Hz
+累计位移      : GT 7.98 m, 导航 24.35 m, ZLIO 原始 23.94 m
+★ 位移夸大倍数: 3.05×
+终点位置偏差  : 16.069 m
+换代代次      : 0,1（次数 1）
+```
+
+> ⚠ 两个已修的坑（改这个工具时别退回去）：
+>
+> 1. **`DiagnosticStatus.level` 是 `byte`**，ROS 2 的 Python 绑定给它的是**单字节 `bytes`**
+>    （`b'\x01'`），不是 int。直接 `int(status.level)` 会崩：
+>    `ValueError: invalid literal for int() with base 10: b'\x01'`。
+>    工具里统一转成 0/1/2/3。
+> 2. **采样率必须真的受限**：录制循环原来每 `spin_once` 回来就存一个点，在 30~200 Hz 消息面前
+>    等于 ~500 Hz 采样（实测"5 s 录了 2493 个点"）。现在按 `--rate`（默认 20 Hz）节流，
+>    同样的 6 s 只存 ~110 个点，CSV 也不膨胀了。
+
+**原始位姿按 `header.stamp` 与 bridge 输出配对**（两者同戳，实施方案 §4.2），所以 ⑧ 的抖动是
+真实抖动，不掺"两帧之间又走了多少"的假噪声。
 
 
 ---

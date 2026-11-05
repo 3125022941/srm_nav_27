@@ -71,17 +71,29 @@ ign_sim_pointcloud_tool:
     ang_res_y: 1.903225806451613  # (7+52) / (32-1) # 垂直角分辨率（度，须 = 视场/线数）
     min_range: 0.1                                 # 丢弃雷达近盲区内的点（米）
     max_range: 39.9                                # 丢弃40米无回波量程点（米）
-    # ★ 2026-11-05 实测结论：必须 = 1/雷达频率（当前 20 Hz -> 0.05 s）。
-    #   依据（同一台车、同一段自转，三次对照）：
+    # scan_period = "这一帧点云是从多少秒里扫出来的"，节点据此按列号线性给每个点编
+    # 一个 time 偏移（0 ~ scan_period），见 point_cloud_converter.cpp:94：
+    #     time = (point_id % horizon_scan) * scan_period / horizon_scan
+    # 下游只有"去畸变"用它（ZLIO: point_time_field: time / scale 1.0 / absolute false）。
+    #
+    # ★ 2026-11-06：**当前改为 0（关闭扫掠建模）**，用于 ZLIO 的 A/B 基线。
+    #   理由：Gazebo 的 gpu_lidar 是**瞬时快照**（一次 update 把 600×32 条射线全打完），
+    #   物理上一致的模型就是"所有点同一时刻"，即 0。原值 0.05 是当年为 Point-LIO 标出来的
+    #   经验值（给它补一个"扫掠"来抵消时间戳滞后），对 ZLIO 未必成立。
+    #   改成 0 后 `time` 字段全为 0，ZLIO 的去畸变退化为 no-op（不影响输入校验：
+    #   ZLIO 只用 max(time) 当观测结束时刻，全零等于"本帧在 stamp 这一刻到齐"）。
+    #
+    # 标定依据（2026-11-05，同一台车、同一段自转，Point-LIO 时做的对照）：
     #     每帧转角   航向误差均值   位移倍数
     #     0°         +0.11°        0.99x    <- 车不转
-    #     11.5°      -11.8°        0.71x    <- 10Hz、2rad/s、补 0.1 s（补对了量，但太大）
+    #     11.5°      -11.8°        0.71x    <- 10Hz、2rad/s、补 0.1 s（补过头）
     #     5.7°       -0.9°         10.7x    <- 10Hz、不补（航向好，平移崩）
     #     5.7°       -1.2°         8.0x     <- 20Hz、不补（同上：平移仍崩）
-    #   => Gazebo 的点云在帧内是逐渐扫出来的，必须补；补的量要等于帧时长，
-    #      补多了会注入假旋转把航向带偏。20 Hz 时 0.05 s 的假旋转只有 2.9°，
-    #      航向不会被拖坏，再给平移拿到它需要的去畸变。
-    scan_period: 0.05                             # = 1/20Hz（必须与 lidar.update_rate 一致）
+    #   => "补少了平移崩、补多了航向崩"。0.05 是那个折中；现在改成 0 是先拿一条干净基线，
+    #      用示波的 ①(yaw) / ⑥(位移夸大倍数) 对比 0 与 0.05 再定。
+    #
+    # ⚠ 回到 0.05 时别忘了它必须 = 1/lidar.update_rate（几何 YAML 里 20 Hz）。
+    scan_period: 0.0                              # 2026-11-06 起为 0（关闭扫掠建模，A/B 基线）
 
 point_lio:
   ros__parameters:
@@ -196,6 +208,65 @@ loam_interface:
     #   yaw 被拉偏几十度，进而让点云地图与栅格地图整体错开一个大角度。
     #   关掉后，安装外参与云台关节只由下游 sensor_scan_generation 的实时 TF 算一次。
     planarize_pose: False
+
+# ZLIO 前端桥接（方案 §4 / §7.2）：把 ZLIO 的局部 IMU 系位姿与点云改写成 odom 系，
+# 顶替 loam_interface 的职责。只在 --lio + --lio-frontend zlio 时启动；
+# point_lio / loam_interface 两段都保留不动，回退时直接切回 point_lio。
+zlio_bridge:
+  ros__parameters:
+    use_sim_time: True
+    # 输出父帧必须与 sensor_scan_generation.odometry_msg.frame_id 一致（都是 odom）。
+    odom_frame: "odom"
+    # 查 T(base_frame ← lidar_frame) 用的车体帧：odom 的轴向 = 出生时的 base_link（契约 C3）。
+    base_frame: "base_link"
+    # ⚠ 填的是 **ZLIO 的 body_frame**，不是雷达驱动的 frame：仿真里两者同名
+    #   （IMU 与雷达同 link）。实车要填 livox_imu —— 填成 livox_frame 不会报错，
+    #   只会让 T_off 少/多一个固定外参，表现为整体位置偏 4.4 cm、姿态恒定偏差。
+    lidar_frame: "front_mid360"
+    # zlio 的输出被 remap 到 zlio/ 子命名空间（方案 §5.5），这里必须跟着改。
+    frame_topic: "zlio/frame"
+    session_topic: "zlio/session"
+    # 与 loam_interface.planarize_pose 保持一致：平面化只由 sensor_scan_generation
+    # 做一次。仿真里把倾斜的雷达系当底盘压平会把 yaw 拉偏几十度。
+    planarize_pose: False
+    tf_timeout: 0.5
+    # 换代锚定（方案 §4.3，必做项）：ZLIO 输入中断后自己换代，新代次 odom 原点重置为
+    # 当时位姿；不锚定会让 terrain_analysis 的地形图整体错位、避障静默失效。
+    anchor_on_epoch_change: True
+    # 诊断用：换代时发一次 std_msgs/UInt64（新 epoch）。
+    epoch_topic: "zlio_bridge/epoch"
+    # ---- 发散观测（2026-11-05 撞墙飞掉之后加的）----
+    # ZLIO 运行时没有加速度饱和检查、没有卡方/新息门限、没有离群点剔除，唯一的门是
+    # "一个面都没匹配到"，所以"发散"在它的输出里和"正常"长得一样。bridge 这里把它显式化：
+    #   * matches_topic：每帧匹配上的面观测点数（std_msgs/UInt32）。掉到几十以下 = 几何退化
+    #     （正对单面墙/空旷），平移方向开始不可观；
+    #   * max_frame_jump_*：同一代内单帧跳变超阈值就打 ERROR（20 Hz 下 1.0 m/帧 = 20 m/s，
+    #     0.5 rad/帧 = 10 rad/s，都远高于本车物理极限，撞到就是发散）；
+    #   * reject_implausible_jump：默认 False（只报不拦）。打开后超阈值的帧会被丢弃，
+    #     姿态"卡住"而不是"飞走" —— 更安全但会掩盖真实问题，只在演示/比赛保命时打开。
+    matches_topic: "zlio_bridge/matches"
+    min_matches_warn: 30
+    max_frame_jump_pos: 1.0
+    max_frame_jump_yaw: 0.5
+    reject_implausible_jump: False
+    # 事件流（diagnostic_msgs/DiagnosticArray）：把 few_matches / update_rejected /
+    # frame_jump / epoch / drop 的**确切时刻**发出来，示波工具画成竖线。
+    # 这样"第几秒开始坏的"是确定的，不用从节流日志里猜。
+    events_topic: "zlio_bridge/events"
+
+# IMU 加速度饱和保护（方案 §5.4 的缓解措施）：把 |a| 削到上限再喂给 ZLIO。
+# 只在 --lio + odometry_frontend=zlio 时启动；Point-LIO 前端不经过它（它自己有
+# check_satu + satu_acc: 30.0）。把 max_acceleration 设成很大（如 1e6）等于关掉削顶，
+# 但节点仍会转发（可以作为 A/B 的"只转发不削顶"对照）。
+imu_saturation_guard:
+  ros__parameters:
+    use_sim_time: True
+    input_topic: "livox/imu"
+    output_topic: "livox/imu_saturated"
+    # 与 point_lio 的 satu_acc 对齐：正常行驶 < 5 m/s²，撞击时可达上百 —— 30 只拦撞击。
+    max_acceleration: 30.0
+    warn_throttle_sec: 2.0
+    report_interval_sec: 10.0
 
 sensor_scan_generation:
   ros__parameters:

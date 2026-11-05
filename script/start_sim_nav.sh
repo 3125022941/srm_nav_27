@@ -14,8 +14,9 @@
 #   2026-10-19 独立自转链 (rotation_test_sender / rotation_controller /
 #   rotation_velocity) 已删除, 不存在第二路 wz 来源, 也没有 --wz-source/
 #   --no-fakeyaw/--rotation-* 这些开关。
-#   小陀螺(持续自转)用 --yaw-mode spin + script/spin_control.sh: 请求直接进 MINCO,
-#   wz 仍由导航输出 (不再经 rotation_controller)。
+#   小陀螺(持续自转)用 --chassis-spin [rad/s] (缺省 2.0): 脚本自动把请求发到
+#   rotation_cmd, 请求直接进 MINCO, wz 仍由导航输出 (不再经 rotation_controller)。
+#   也可以只开 --yaw-mode spin, 再手动 script/spin_control.sh on <rad/s>。
 #
 # 速度限幅 (控制器 / 平滑器 / mux / 恢复行为) 的**唯一来源**:
 #   src/srm27_navigation/srm27_nav_bringup/config/simulation/speed_limits.yaml
@@ -35,7 +36,9 @@
 #
 #   初始重定位 (GICP):
 #   ./script/start_sim_nav.sh                                    # 默认: Gazebo 真值里程计 (纯控制链路调试)
-#   ./script/start_sim_nav.sh --lio                              # 纯 Point-LIO 里程计 (最接近实车链路)
+#   ./script/start_sim_nav.sh --lio                              # 纯 LIO 里程计, 默认前端 = ZLIO
+#   ./script/start_sim_nav.sh --lio --lio-frontend point_lio \
+#       -w rmuc_2025 -m rmuc_2025                                # 回退: 前端换回 Point-LIO (A/B 对照)
 #     --lio 与 --gicp 互斥: --lio 用 LIO 出 odom->base_link, map->odom 保持静态;
 #     --gicp 用 LIO + 先验点云重定位 (需要 PCD)。
 #     --gicp 会把定位方式切成 use_pcd_localization:=True + use_lio_odometry:=False:
@@ -47,11 +50,15 @@
 #     出生点有偏移, 用 --init-pose 直接给 map->odom 初值 (方案 §5 的 T_M_O_init)。
 #
 # 用法:
-#   ./script/start_sim_nav.sh                                  # rmuc_2025 + 隧道地图(默认), 不自转
+#   ./script/start_sim_nav.sh                                  # rmuc_2025 + 隧道地图(默认)
 #   ./script/start_sim_nav.sh -m rmuc_2025                     # 换成普通场地地图
 #   ./script/start_sim_nav.sh -w srm_empty                     # 空场 (Gazebo 起来自动开始运行)
-#   ./script/start_sim_nav.sh                                  # 默认: MINCO + fakeyaw (导航拥有 wz)
-#   ./script/start_sim_nav.sh --yaw-mode spin                   # 小陀螺 (脚本手动控制转速)
+#   ./script/start_sim_nav.sh                                  # 默认: MINCO + fakeyaw, 底盘与云台都不转
+#   ./script/start_sim_nav.sh --chassis-spin                   # 底盘小陀螺 2.0 rad/s (云台不转)
+#   ./script/start_sim_nav.sh --gimbal-spin                    # 云台自转 -1.0 rad/s (底盘不转)
+#   ./script/start_sim_nav.sh --chassis-spin --gimbal-spin     # 两个一起: 底盘 2.0 + 云台 -1.0
+#   ./script/start_sim_nav.sh --chassis-spin 3.0 --gimbal-spin 1.5   # 自己给转速
+#   ./script/start_sim_nav.sh --yaw-mode spin                   # 只开航向策略, 转速另用 spin_control.sh
 #   ./script/start_sim_nav.sh --verify-spin                     # 一步验证小陀螺导航 (无头 + 自动断言 + 清理)
 #   ./script/start_sim_nav.sh --no-run                          # Gazebo 保持暂停, 手动点播放
 #   ./script/start_sim_nav.sh --no-rviz                         # 只跑仿真 + 导航
@@ -81,6 +88,19 @@
 #                                LIO 需要场景有几何结构: 空场(srm_empty)里 x/y 不可观, 会跑飞。
 #                                最接近实车: odom->base_link 由 sensor_scan_generation 从 LIO 反推,
 #                                点云会被 LIO 去畸变。与 --gicp 互斥。
+#       --lio-frontend <point_lio|zlio>
+#                                --lio 时由哪个前端产生里程计。**默认 zlio**(2026-11-05 切换);
+#                                point_lio = 回退到迁移前的前端(方案 §9 第 1 级回退)。
+#                                没构建 frontend 包时默认值会自动退回 point_lio 并告警。
+#                                zlio = z-localization 的 frontend 包 (ZLIO):
+#                                  * 第 ① 层换成 ZLIO, 第 ② 层(坐标系改写)由 zlio_bridge
+#                                    承担, loam_interface 不再启动;
+#                                  * 需要先构建 frontend 与 localization_interfaces:
+#                                    colcon build --symlink-install \
+#                                      --packages-select localization_interfaces frontend
+#                                  * 方案文档: docs/仿真LIO前端替换Z-LIO实施方案(ai).md
+#                                  * 需要 --lio; --gicp 暂不接入 ZLIO。
+#                                  环境变量: LIO_FRONTEND
 #       --gicp / --no-gicp       是否用 GICP 初始重定位 (默认关闭 = 原来的静态地图模式)
 #       --prior-pcd <绝对路径>   先验点云 PCD (--gicp 时必填)
 #       --prior-pcd-manifest <绝对路径>
@@ -91,14 +111,25 @@
 #                                map->odom 初值, 等价于 nav2 参数的 init_pose;
 #                                给了就以它为准 (不再从 manifest 推导)
 #       --yaw-mode <auto|se2|spin>  MINCO 航向策略 (默认 auto=se2, 导航拥有 wz)。
-#                                   spin 时**云台默认以 2.0 rad/s 匀速自转**（仿真器直接
-#                                   施加，雷达跟着转、Point-LIO 直接感知）。
-#       --gimbal-spin <rad/s>       云台自转角速度，负值=反向；0 = 不转。
+#                                   spin = 允许外部自转请求经 rotation_cmd 直接进 MINCO
+#                                   (判停自动换 OmniStoppedGoalChecker)。
+#                                   只给 --yaw-mode spin 车**还不会转**: 它只是"允许被请求",
+#                                   要转请用 --chassis-spin 或 script/spin_control.sh on。
+#       --chassis-spin [rad/s]      底盘小陀螺: 给了就以 rad/s 恒速自转, 不给数值时
+#                                   **默认 2.0 rad/s**(负值=反向)。等价于 --yaw-mode spin
+#                                   + 一个常驻的 rotation_cmd 请求(脚本在 Nav2 就绪后
+#                                   自动调 script/spin_control.sh on)。
+#                                   **不加这个参数 = 底盘不转**(默认行为)。
+#                                   注意: wz 归导航, 控制器只在跟随路径时输出速度,
+#                                   所以没有导航目标时底盘不会转(迁移契约, 不是故障)。
+#                                   停转: script/spin_control.sh off
+#       --no-chassis-spin           等价于 --chassis-spin 0 (显式关掉, 覆盖环境变量)。
+#       --gimbal-spin [rad/s]       云台自转角速度: 给了就让云台连同其上的雷达恒速自转,
+#                                   不给数值时**默认 -1.0 rad/s**(负值=反向)。
+#                                   **不加这个参数 = 云台不转**(旧版"默认 2.0 一直转"已取消)。
+#                                   由仿真器 SrmVelocitySystem 直接施加, 不经 ROS 话题。
 #                                   也可用环境变量 GIMBAL_SPIN_WZ 覆盖。
 #       --no-gimbal-spin            等价于 --gimbal-spin 0。
-#                                   spin = 小陀螺: 自转请求经 rotation_cmd 直接进
-#                                   MINCO, 判停自动换 OmniStoppedGoalChecker,
-#                                   转速用 script/spin_control.sh
 #       (--wz-source / --fakeyaw / --no-fakeyaw / --yaw-mode xy_only 已删除:
 #        独立自转链于 2026-10-19 删除, wz 只由导航产生, 没有旧链可退回)
 #       --verify-spin       一步验证小陀螺导航: 强制无头 (--no-rviz --no-gui, direct 模式),
@@ -120,9 +151,10 @@
 # 环境变量:
 #   WORLD MAP MAP_NAME PARAMS_FILE CONTROLLER USE_RVIZ USE_GUI RUN_IMMEDIATELY
 #   USE_GICP PRIOR_PCD_FILE PRIOR_PCD_MANIFEST INIT_POSE GICP_RUN_ID
-#   USE_VELOCITY_SMOOTHER YAW_MODE
+#   USE_VELOCITY_SMOOTHER YAW_MODE CHASSIS_SPIN_WZ GIMBAL_SPIN_WZ
+#   CHASSIS_SPIN_READY_TIMEOUT(120)
 #   VERIFY_SPIN_WZ VERIFY_GOAL_DIST VERIFY_KEEP VERIFY_READY_TIMEOUT VERIFY_GOAL_TIMEOUT
-#   USE_LIO_ODOMETRY(0/1)
+#   USE_LIO_ODOMETRY(0/1) LIO_FRONTEND(point_lio|zlio)
 #   OPEN_MODE(tab|window|direct) TERMINAL ROBOT_NS USE_COMPOSITION DRY_RUN SRM27_WS_DIR PREKILL
 #
 # 说明:
@@ -173,11 +205,24 @@ VERIFY_GOAL_TIMEOUT="${VERIFY_GOAL_TIMEOUT:-180}"
 VERIFY_KEEP="${VERIFY_KEEP:-0}"              # 1 = 验证完不清理, 留着看 RViz/调试
 #: MINCO 航向策略: auto=se2 (导航拥有 wz); spin=小陀螺 (外部自转请求进线)。
 YAW_MODE="${YAW_MODE:-auto}"
-# 云台自转角速度 (rad/s)：留空 = 按航向策略自动决定（spin -> 2.0，其它 -> 0）。
-# 由仿真器 SrmVelocitySystem 直接施加，不经 ROS 话题/桥接；负值 = 反向。
+YAW_MODE_CLI_GIVEN="${YAW_MODE_CLI_GIVEN:-0}"  # 1 = 命令行显式给过 --yaw-mode
+
+# 底盘自转 (小陀螺) 角速度 rad/s：留空 = 不自转；--chassis-spin 不带数值时用 2.0。
+# 请求走 rotation_cmd -> MINCO -> fake_vel_transform -> mux -> cmd_vel_sim，
+# 与手动的 script/spin_control.sh 完全同一条链路（同一话题、同一 PID 文件）。
+CHASSIS_SPIN_WZ="${CHASSIS_SPIN_WZ:-}"
+if [ -n "$CHASSIS_SPIN_WZ" ]; then CHASSIS_SPIN_GIVEN=1; fi
+CHASSIS_SPIN_GIVEN="${CHASSIS_SPIN_GIVEN:-0}"  # 1 = 用户显式指定过（含环境变量）
+CHASSIS_SPIN_DEFAULT="2.0"                     # --chassis-spin 不带数值时的转速
+# Nav2 就绪后再下发自转请求，等多久（秒）。等不到也照常启动发布器，只是先告警。
+CHASSIS_SPIN_READY_TIMEOUT="${CHASSIS_SPIN_READY_TIMEOUT:-120}"
+
+# 云台自转角速度 (rad/s)：留空 = 不自转；--gimbal-spin 不带数值时用 -1.0（负值 = 反向）。
+# 由仿真器 SrmVelocitySystem 直接施加，不经 ROS 话题/桥接。
 GIMBAL_SPIN_WZ="${GIMBAL_SPIN_WZ:-}"
 if [ -n "$GIMBAL_SPIN_WZ" ]; then GIMBAL_SPIN_GIVEN=1; fi
-GIMBAL_SPIN_GIVEN="${GIMBAL_SPIN_GIVEN:-0}"   # 1 = 用户显式指定过（含环境变量）
+GIMBAL_SPIN_GIVEN="${GIMBAL_SPIN_GIVEN:-0}"    # 1 = 用户显式指定过（含环境变量）
+GIMBAL_SPIN_DEFAULT="-1.0"                     # --gimbal-spin 不带数值时的转速
 
 # 自定义 RViz 配置（留空 = 用包内 rviz/nav2_default_view.rviz；--rviz-config 覆盖）
 RVIZ_CONFIG="${RVIZ_CONFIG:-}"
@@ -196,6 +241,13 @@ USE_GICP="${USE_GICP:-0}"                    # 1 = use_pcd_localization:=True
 # 默认 Gazebo 真值里程计；要用 Point-LIO 出里程计(最接近实车链路)显式加 --lio / USE_LIO_ODOMETRY=1。
 USE_LIO_ODOMETRY="${USE_LIO_ODOMETRY:-0}"    # 1 = use_lio_odometry:=True（Point-LIO 出里程计）
 LIO_CLI_GIVEN="${LIO_CLI_GIVEN:-0}"          # 1 = 命令行显式给过 --lio/--no-lio
+# --lio 用哪个前端（方案 §6.2 / §8.0）：**默认 zlio**（2026-11-05 切换），point_lio = 回退。
+# 回退有三级，随时可用：
+#   1) 运行期：--lio-frontend point_lio
+#   2) 构建期：不构建 frontend/localization_interfaces —— 本脚本会自动退回 point_lio 并告警
+#   3) 代码期：把下面这行的缺省改回 point_lio（四个 launch 的默认值同理）
+LIO_FRONTEND="${LIO_FRONTEND:-zlio}"
+LIO_FRONTEND_CLI_GIVEN="${LIO_FRONTEND_CLI_GIVEN:-0}"  # 1 = 命令行显式给过 --lio-frontend
 PRIOR_PCD_FILE="${PRIOR_PCD_FILE:-}"         # 先验点云 PCD 绝对路径
 PRIOR_PCD_MANIFEST="${PRIOR_PCD_MANIFEST:-}" # 先验点云清单 (可选, 用于推导 init_pose)
 PRIOR_PCD_SEARCH_DIRS="${PRIOR_PCD_SEARCH_DIRS:-}"  # 额外搜索目录 (冒号分隔)
@@ -213,6 +265,15 @@ usage() {
 }
 
 # ---------- 命令行参数 ----------
+# --chassis-spin / --gimbal-spin 是"可带数值"的开关: 下一个参数是数字就当转速,
+# 否则用各自的默认值。这样 `--gimbal-spin --no-rviz` 不会被误吞成转速。
+is_spin_rate() {
+  case "${1:-}" in
+    ''|*[!0-9.eE+-]*) return 1 ;;
+  esac
+  awk -v v="$1" 'BEGIN{ exit !(v == v + 0) }'
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     -w|--world)   WORLD_FROM_USER="${2:?--world 需要一个世界名}"; shift 2 ;;
@@ -228,6 +289,8 @@ while [ $# -gt 0 ]; do
     --no-gicp)    USE_GICP="0"; shift ;;
     --lio)        USE_LIO_ODOMETRY="1"; LIO_CLI_GIVEN=1; shift ;;
     --no-lio)     USE_LIO_ODOMETRY="0"; LIO_CLI_GIVEN=1; shift ;;
+    --lio-frontend) LIO_FRONTEND="${2:?--lio-frontend 需要 point_lio|zlio}"
+                    LIO_FRONTEND_CLI_GIVEN=1; shift 2 ;;
     --prior-pcd)          PRIOR_PCD_FILE="${2:?--prior-pcd 需要绝对路径}"; shift 2 ;;
     --prior-pcd-manifest) PRIOR_PCD_MANIFEST="${2:?--prior-pcd-manifest 需要绝对路径}"; shift 2 ;;
     --init-pose)          INIT_POSE="${2:?--init-pose 需要 x,y,z,roll,pitch,yaw}"; shift 2 ;;
@@ -240,8 +303,22 @@ while [ $# -gt 0 ]; do
     --no-run)     RUN_IMMEDIATELY="false"; shift ;;
     --smoother)   USE_VELOCITY_SMOOTHER="True"; shift ;;
     --no-smoother) USE_VELOCITY_SMOOTHER="False"; shift ;;
-    --yaw-mode)   YAW_MODE="${2:?--yaw-mode 需要 auto|se2|spin}"; shift 2 ;;
-    --gimbal-spin) GIMBAL_SPIN_WZ="${2:?--gimbal-spin 需要 rad/s 数值}"; GIMBAL_SPIN_GIVEN=1; shift 2 ;;
+    --yaw-mode)   YAW_MODE="${2:?--yaw-mode 需要 auto|se2|spin}"; YAW_MODE_CLI_GIVEN=1; shift 2 ;;
+    --chassis-spin)
+                  CHASSIS_SPIN_GIVEN=1
+                  if [ $# -ge 2 ] && is_spin_rate "$2"; then
+                    CHASSIS_SPIN_WZ="$2"; shift 2
+                  else
+                    CHASSIS_SPIN_WZ="$CHASSIS_SPIN_DEFAULT"; shift
+                  fi ;;
+    --no-chassis-spin) CHASSIS_SPIN_WZ="0"; CHASSIS_SPIN_GIVEN=1; shift ;;
+    --gimbal-spin)
+                  GIMBAL_SPIN_GIVEN=1
+                  if [ $# -ge 2 ] && is_spin_rate "$2"; then
+                    GIMBAL_SPIN_WZ="$2"; shift 2
+                  else
+                    GIMBAL_SPIN_WZ="$GIMBAL_SPIN_DEFAULT"; shift
+                  fi ;;
     --no-gimbal-spin) GIMBAL_SPIN_WZ="0"; GIMBAL_SPIN_GIVEN=1; shift ;;
     --verify-spin) VERIFY_SPIN=1; YAW_MODE="spin"; shift ;;
     -h|--help)    usage; exit 0 ;;
@@ -269,21 +346,54 @@ case "$YAW_MODE" in
     ;;
   *) echo "[错误] --yaw-mode 只支持 auto / se2 / spin" >&2; exit 2 ;;
 esac
-# 云台自转：**默认就转**（2.0 rad/s），与航向策略、有没有导航目标都无关 ——
-# 操作手要求"云台一直匀速转"。要它停用 --no-gimbal-spin 或 GIMBAL_SPIN_WZ=0。
-if [ -z "$GIMBAL_SPIN_WZ" ]; then
-  # LIO 模式默认 1.0 rad/s：2 rad/s 时每帧（10 Hz）云台要转 11.5°，
-  # 在这个点密度（600 点/帧）下 Point-LIO 的里程计会抖；1.0 稳得多。
-  # 真值里程计模式不受此限制，仍按 2.0。
-  # 此时 USE_LIO_ODOMETRY 可能还是原始的 0/1（归一化在后面），两种写法都认。
-  case "${USE_LIO_ODOMETRY:-0}" in
-    1|true|True|TRUE) GIMBAL_SPIN_WZ="1.0" ;;
-    *) GIMBAL_SPIN_WZ="2.0" ;;
-  esac
+
+# ---------- 底盘 / 云台自转（默认都不转）----------
+# 约定（2026-11-05 起）：**不加参数 = 不转**。旧版本"云台默认 2.0 rad/s 一直转"已取消。
+# 显式给参数但不带数值时用各自的默认转速：
+#   --chassis-spin -> 2.0 rad/s（负值反向）；--gimbal-spin -> -1.0 rad/s（负值反向）。
+if [ "$CHASSIS_SPIN_GIVEN" = "1" ]; then
+  [ -n "$CHASSIS_SPIN_WZ" ] || CHASSIS_SPIN_WZ="$CHASSIS_SPIN_DEFAULT"
+else
+  CHASSIS_SPIN_WZ="0"
 fi
-case "$GIMBAL_SPIN_WZ" in
-  ''|*[!0-9.eE+-]*) echo "[错误] 云台自转速度必须是数字 (rad/s): $GIMBAL_SPIN_WZ" >&2; exit 2 ;;
-esac
+if [ "$GIMBAL_SPIN_GIVEN" = "1" ]; then
+  [ -n "$GIMBAL_SPIN_WZ" ] || GIMBAL_SPIN_WZ="$GIMBAL_SPIN_DEFAULT"
+else
+  GIMBAL_SPIN_WZ="0"
+fi
+
+check_spin_rate() {
+  local label="$1" value="$2"
+  case "$value" in
+    ''|*[!0-9.eE+-]*) echo "[错误] ${label}必须是数字 (rad/s): $value" >&2; return 1 ;;
+  esac
+  if ! awk -v v="$value" 'BEGIN{ exit !(v == v + 0) }'; then
+    echo "[错误] ${label}必须是数字 (rad/s): $value" >&2
+    return 1
+  fi
+  return 0
+}
+check_spin_rate "底盘自转速度" "$CHASSIS_SPIN_WZ" || exit 2
+check_spin_rate "云台自转速度" "$GIMBAL_SPIN_WZ" || exit 2
+
+# 底盘自转必须让 MINCO 进入 spin 航向策略，否则请求会被航向策略忽略（车不转）。
+# 只给 --yaw-mode spin（不带 --chassis-spin）时保持旧行为：不发请求，等 spin_control.sh。
+if [ "$CHASSIS_SPIN_GIVEN" = "1" ] && \
+   ! awk -v v="$CHASSIS_SPIN_WZ" 'BEGIN{ exit (v == 0) ? 0 : 1 }'; then
+  if [ "$YAW_MODE_CLI_GIVEN" = "1" ] && [ "$YAW_MODE" != "spin" ]; then
+    echo "[错误] --chassis-spin 与 --yaw-mode ${YAW_MODE} 矛盾：" >&2
+    echo "       底盘自转请求只有在 yaw_mode=spin 时才会被 MINCO 消费。" >&2
+    echo "       去掉 --yaw-mode，或改成 --yaw-mode spin。" >&2
+    exit 2
+  fi
+  YAW_MODE="spin"
+fi
+
+# --verify-spin 自己发 VERIFY_SPIN_WZ 的请求；若同时给了 --chassis-spin，用它的转速，
+# 让"脚本说转多少"与"验证请求多少"是同一个数。
+if [ "$VERIFY_SPIN" = "1" ] && [ "$CHASSIS_SPIN_GIVEN" = "1" ]; then
+  VERIFY_SPIN_WZ="$CHASSIS_SPIN_WZ"
+fi
 
 if [ "$VERIFY_SPIN" = "1" ] && [ "$YAW_MODE" != "spin" ]; then
   echo "[错误] --verify-spin 需要 --yaw-mode spin（小陀螺验证），当前是 $YAW_MODE" >&2
@@ -337,6 +447,7 @@ if [ "$DRY_RUN" != "1" ]; then
     require_pkg_from_ws "$_pkg" || exit 1
   done
 fi
+
 
 if [ "$DRY_RUN" != "1" ] && ! command -v flock >/dev/null 2>&1; then
   echo "[错误] 未找到 flock, 无法保证 Gazebo 单实例启动。" >&2
@@ -572,6 +683,47 @@ if [ "$USE_GICP" = "true" ] && [ "$LIO_CLI_GIVEN" != "1" ]; then
   USE_LIO_ODOMETRY="0"
 fi
 
+# ---------- 里程计前端（--lio-frontend） ----------
+# 放在 --gicp 归一化之后：--gicp 会把 USE_LIO_ODOMETRY 静默改成 false，
+# 那时再判 "zlio 需要 --lio" 才准确。
+case "$LIO_FRONTEND" in
+  point_lio|zlio) ;;
+  *)
+    echo "[错误] --lio-frontend 只支持 point_lio / zlio，当前是: $LIO_FRONTEND" >&2
+    exit 2
+    ;;
+esac
+# 非 LIO 链路（真值里程计 / --gicp）下"前端"没有意义：
+#   * 显式要了 zlio 又没给 --lio，说明命令写错了 → 直接报错；
+#   * 只是用了默认值 → 静默让位给 point_lio（与上面 --gicp 对 USE_LIO_ODOMETRY 的处理一致），
+#     否则 `--gicp` 会因为"默认 zlio"而莫名报错。
+if [ "$LIO_FRONTEND" = "zlio" ] && [ "$USE_LIO_ODOMETRY" != "true" ]; then
+  if [ "$LIO_FRONTEND_CLI_GIVEN" = "1" ]; then
+    echo "[错误] --lio-frontend zlio 需要 --lio: ZLIO 只在纯 LIO 链路启用。" >&2
+    echo "       --gicp 暂不接入 ZLIO（方案 §10：small_gicp 那一侧只差放宽条件，尚未做）。" >&2
+    echo "       用法: ./script/start_sim_nav.sh --lio" >&2
+    exit 2
+  fi
+  LIO_FRONTEND="point_lio"
+fi
+
+# ZLIO 前端需要 frontend 包。默认值没构建时**自动退回** Point-LIO 并告警（方案 §9 第 2 级回退：
+# 不装那两个包，其余照旧应该还能跑）；显式要求 zlio 时则直接失败，不让人以为在跑 ZLIO。
+if [ "$LIO_FRONTEND" = "zlio" ] && [ "$DRY_RUN" != "1" ]; then
+  if ! require_pkg_from_ws frontend >/dev/null 2>&1; then
+    if [ "$LIO_FRONTEND_CLI_GIVEN" = "1" ]; then
+      echo "[错误] --lio-frontend zlio 需要 frontend 包（z-localization 的 LIO 前端），当前未找到。" >&2
+      echo "       构建方法: colcon build --symlink-install --packages-select localization_interfaces frontend" >&2
+      echo "       或者用 Point-LIO 前端: --lio-frontend point_lio" >&2
+      exit 1
+    fi
+    echo "[警告] 默认前端 zlio 需要 frontend 包，但当前工作空间里没有构建它 ——" >&2
+    echo "       本次自动退回 Point-LIO（方案 §9 第 2 级回退）。要试 ZLIO 请先:" >&2
+    echo "         colcon build --symlink-install --packages-select localization_interfaces frontend" >&2
+    LIO_FRONTEND="point_lio"
+  fi
+fi
+
 # ---------- 云台驱动方式：谁来让云台转 ----------
 # system  = 仿真插件按 gimbal_spin_rate 直接驱动（真值里程计模式，起来就转）
 # external = 插件不驱动，改由 ROS 话题 + gz JointController；LIO 模式下由
@@ -585,6 +737,13 @@ fi
 GIMBAL_DRIVER="system"
 if [ "$USE_LIO_ODOMETRY" = "true" ]; then
   GIMBAL_DRIVER="external"
+  # LIO 下云台转太快会让 Point-LIO 的里程计抖（每帧转角随转速线性变大）：
+  # 2 rad/s @10 Hz 时每帧 11.5°，实测会抖；1.0 rad/s 稳得多。这里不擅自改用户的
+  # 数值（默认已是 -1.0），只提醒一句。
+  if awk -v v="$GIMBAL_SPIN_WZ" 'BEGIN{ a = (v < 0) ? -v : v; exit !(a > 1.0) }'; then
+    echo "[警告] LIO 模式下云台转速 ${GIMBAL_SPIN_WZ} rad/s 偏快（|wz| > 1.0）：" >&2
+    echo "       Point-LIO 每帧转角变大，里程计容易抖。建议 --gimbal-spin 1.0 或更小。" >&2
+  fi
   GIMBAL_SPIN_NOTE_LIO=1
 fi
 NAV_EXTRA_ARGS=""
@@ -617,7 +776,12 @@ if [ "$USE_GICP" = "true" ]; then
   [ -z "$PRIOR_PCD_MANIFEST" ] && [ -f "${PRIOR_PCD_FILE%.pcd}_manifest.yaml" ] && \
     PRIOR_PCD_MANIFEST="${PRIOR_PCD_FILE%.pcd}_manifest.yaml"
   printf -v PRIOR_PCD_Q '%q' "$PRIOR_PCD_FILE"
-  NAV_EXTRA_ARGS=" use_pcd_localization:=True use_lio_odometry:=False prior_pcd_file:=${PRIOR_PCD_Q}"
+  # odometry_frontend 必须**每条链路都显式传**：nav_srm_simulation_launch.py 的
+  # 声明缺省是 zlio（2026-11-05 切换），而 nav2_stack_launch.py 校验
+  # "zlio 必须配 use_lio_odometry:=True"。不传就会让 launch 拿到 zlio + lio=False
+  # → 启动直接抛异常（现象：整条导航栈没起来，连带 RViz 也不出现）。
+  # 这里传的是已经解析过的 LIO_FRONTEND（非 LIO 链路上面已退回 point_lio）。
+  NAV_EXTRA_ARGS=" use_pcd_localization:=True use_lio_odometry:=False odometry_frontend:=${LIO_FRONTEND} prior_pcd_file:=${PRIOR_PCD_Q}"
   # 栅格图 (map_server 用) 与先验点云必须同原点, 但它不是定位输入;
   # 若同目录正好有一张同名栅格图, 提示一下, 不自动替换 (避免顺序耦合)。
   if [ -z "${MAP:-}" ] && [ -f "${PRIOR_PCD_FILE%.pcd}.yaml" ]; then
@@ -636,16 +800,22 @@ else
       echo "         · 或加 --no-lio 用真值里程计做控制/决策验收。" >&2
       [ "${ALLOW_LIO_EMPTY_WORLD:-0}" = "1" ] || { echo "[退出] 如确认要这么跑，加 ALLOW_LIO_EMPTY_WORLD=1。" >&2; exit 2; }
     fi
-    # 纯 LIO：odom->base_link 由 sensor_scan_generation 从 Point-LIO 反推。
+    # 纯 LIO：odom->base_link 由 sensor_scan_generation 从 LIO 反推。
     # ⚠ LIO 的 odom 原点 = 出生点（不是地图原点），而 map->odom 在本链路是静态发布，
     #   所以必须把它设成**出生点在地图里的位姿**，否则机器人会被投影到离真实位置
     #   一个出生点远的地方（默认真值模式下出生点是 (3.4, 9.5)，错位 10 m 后
     #   净空/规划全废：实测 minimum_clearance=0.349 < 0.38 → validation_failed → ABORT）。
     # 地图是以**出生点为原点**建的（GT 模式 map≡odom 才能正常导航），而 LIO 的 odom
     # 原点同样是出生点 → 所以 map->odom 必须保持恒等，**不要**加出生点偏移。
-    NAV_EXTRA_ARGS="$NAV_EXTRA_ARGS use_lio_odometry:=True"
+    #
+    # odometry_frontend 决定第 ① 层由谁产生：point_lio（旧行为）或 zlio。
+    # 第 ② 层（坐标系改写）永远是"非 point_lio 就用 zlio_bridge"，由 launch 里的
+    # 条件统一处理，脚本只负责把选择传下去（方案 §6.2）。
+    NAV_EXTRA_ARGS="$NAV_EXTRA_ARGS use_lio_odometry:=True odometry_frontend:=${LIO_FRONTEND}"
   else
-    NAV_EXTRA_ARGS="$NAV_EXTRA_ARGS use_lio_odometry:=False"
+    # 同上：即使不用 LIO 也要显式给前端，否则 launch 会用到它自己的缺省 zlio，
+    # 与 use_lio_odometry:=False 冲突 → 导航栈启动即失败（RViz 也跟着不出现）。
+    NAV_EXTRA_ARGS="$NAV_EXTRA_ARGS use_lio_odometry:=False odometry_frontend:=${LIO_FRONTEND}"
   fi
 fi
 
@@ -863,7 +1033,14 @@ if [ "$USE_GICP" = "true" ]; then
   printf 'map->odom 初值: [%s]\n' "$INIT_POSE"
   printf '试验编号  : %s (写入逐次诊断 run_id)\n' "$GICP_RUN_ID"
 elif [ "$USE_LIO_ODOMETRY" = "true" ]; then
-  printf '定位方式  : Point-LIO 里程计 (slam:=False, use_pcd_localization:=False, use_lio_odometry:=True)\n'
+  if [ "$LIO_FRONTEND" = "zlio" ]; then
+    printf '定位方式  : ZLIO 里程计 (slam:=False, use_pcd_localization:=False, use_lio_odometry:=True, odometry_frontend:=zlio)\n'
+    printf '            前端 = frontend/zlio_node; 坐标系改写 + 换代锚定 = zlio_bridge\n'
+    printf '            loam_interface 不启动; registered_scan/lidar_odometry 由 bridge 唯一发布\n'
+    printf '算法配置  : %s\n' "$PKG_SRC/config/simulation/zlio_mid360.yaml"
+  else
+    printf '定位方式  : Point-LIO 里程计 (slam:=False, use_pcd_localization:=False, use_lio_odometry:=True, odometry_frontend:=point_lio)\n'
+  fi
   printf '            odom->base_link = sensor_scan_generation 从 LIO 反推; map->odom 静态\n'
   printf '            点云由 LIO 去畸变; 底盘 yaw = LIO 传感器 yaw − 云台角(经 TF)\n'
   printf '对照源    : /%s/chassis_odometry_gt (Gazebo 真值, 仿真的"下位机 yaw")\n' "$ROBOT_NS"
@@ -880,14 +1057,17 @@ printf '航向策略  : %s' "$YAW_MODE"
 case "$YAW_MODE" in
   auto) echo '  (推导: se2, 导航拥有 wz)' ;;
   se2)  echo '  (导航拥有 wz: 车头跟路径切线)' ;;
-  spin) echo '  (小陀螺: script/spin_control.sh on <rad/s> / off / status)' ;;
+  spin) echo '  (小陀螺: 自转请求经 rotation_cmd 进 MINCO)' ;;
 esac
+# 底盘 / 云台自转：默认都是"关"，要转必须显式给参数。
+if awk -v v="$CHASSIS_SPIN_WZ" 'BEGIN{ exit (v == 0) ? 0 : 1 }'; then
+  printf '底盘自转  : 关 (默认; 要转加 --chassis-spin [rad/s], 缺省 2.0)\n'
+else
+  printf '底盘自转  : %s rad/s (rotation_cmd -> MINCO; 脚本在 Nav2 就绪后自动下发)\n' "$CHASSIS_SPIN_WZ"
+  printf '            注意: 控制器只在跟随路径时输出速度, 没有导航目标时底盘不会转\n'
+fi
 if awk -v v="$GIMBAL_SPIN_WZ" 'BEGIN{ exit (v == 0) ? 0 : 1 }'; then
-  if [ "${GIMBAL_SPIN_NOTE_LIO:-0}" = "1" ]; then
-    printf '云台自转  : 关（LIO 模式：由 gimbal_spin_gate 在 Point-LIO 稳定后按 %s rad/s 启动）\n' "$GIMBAL_SPIN_WZ"
-  else
-    printf '云台自转  : 关 (静止; 用 --gimbal-spin <rad/s> 手动开)\n'
-  fi
+  printf '云台自转  : 关 (默认; 要转加 --gimbal-spin [rad/s], 缺省 -1.0)\n'
 else
   if [ "$GIMBAL_DRIVER" = "external" ]; then
     printf '云台自转  : %s rad/s (LIO 模式：等 Point-LIO 稳定后由 gimbal_spin_gate 启动；此前锁定)\n' "$GIMBAL_SPIN_WZ"
@@ -895,8 +1075,6 @@ else
     printf '云台自转  : %s rad/s (由仿真器直接施加; 云台上的雷达随之转动)\n' "$GIMBAL_SPIN_WZ"
   fi
 fi
-case "$YAW_MODE" in
-esac
 if [ "$VERIFY_SPIN" = "1" ]; then
   printf '验证模式  : --verify-spin (自转 %s rad/s, 目标 %s m, 跑完%s)\n' \
       "$VERIFY_SPIN_WZ" "$VERIFY_GOAL_DIST" \
@@ -994,7 +1172,9 @@ cat <<EOF
   - Gazebo $( [ "$RUN_IMMEDIATELY" = "true" ] && echo "已直接开始运行(gz sim -r), 不用点播放。" || echo "以暂停启动(--no-run), 需要点播放后仿真才推进。" )
   - Gazebo 里车出现后, 在 RViz 用 "2D Goal Pose" / "Nav2 Goal" 下发目标点。
 
-小陀螺 (需以 --yaw-mode spin 启动; 请求经 rotation_cmd 直接进 MINCO, wz 仍由导航输出):
+小陀螺 (请求经 rotation_cmd 直接进 MINCO, wz 仍由导航输出):
+  启动时加 --chassis-spin [rad/s]      # 脚本自动下发 (缺省 2.0), 无需手动
+  只在启动后手动改转速/停转:             # 需以 --yaw-mode spin 启动
   ./script/spin_control.sh on 2.0      # 恒速自转 2.0 rad/s
   ./script/spin_control.sh status      # 查看请求/实际转速
   ./script/spin_control.sh off         # 撤回请求 (停转)
@@ -1098,6 +1278,68 @@ EOF
 fi
 
 fi  # if [ "${BANNER_DONE:-0}" = "0" ] —— --verify-spin 不打印交互提示
+
+# =============================================================
+# 底盘自转（小陀螺）自动下发 —— 只有给了 --chassis-spin 才走这里
+#
+# 用法契约与手动的 script/spin_control.sh 完全一致（同一话题、同一 PID 文件）：
+#
+#   rotation_cmd --20 Hz--> MINCO(yaw_policy.mode=spin) --cmd_vel_nav_fake-->
+#   fake_vel_transform --> srm_cmd_mux --> cmd_vel_sim --> Gazebo
+#
+# 所以：
+#   * 停转: ./script/spin_control.sh off      查看: ./script/spin_control.sh status
+#   * 请求靠 20 Hz 持续发布保持"新鲜"，MINCO 超时(0.25 s)即撤销自转；
+#   * wz 归导航 —— 控制器只在跟随路径时发布速度，**没有导航目标时底盘不会转**，
+#     这不是故障（迁移契约，见文件头）。
+# 没给 --chassis-spin 时这里什么都不做（默认不转）。
+# =============================================================
+if [ "${VERIFY_SPIN:-0}" = "1" ]; then
+  : # --verify-spin 自己发 VERIFY_SPIN_WZ 的请求，这里不重复起发布器
+elif awk -v v="$CHASSIS_SPIN_WZ" 'BEGIN{ exit (v == 0) ? 0 : 1 }'; then
+  : # 底盘不转（未给参数或显式 --no-chassis-spin）
+else
+  CHASSIS_SPIN_TOPIC="/${ROBOT_NS}/rotation_cmd"
+  CHASSIS_SPIN_ABS="$(awk -v v="$CHASSIS_SPIN_WZ" 'BEGIN{ printf "%.3f", (v < 0) ? -v : v }')"
+  # 本地钳位（spin_control.sh 的 SPIN_MAX_WZ）按本次请求放行，否则 --chassis-spin 3
+  # 会被静默默认钳回 2.0；真正的上限仍由 mux 的 wz_max 兜底。
+  if awk -v v="$CHASSIS_SPIN_ABS" 'BEGIN{ exit !(v > 6.0) }'; then
+    echo "[提示] 请求 ${CHASSIS_SPIN_WZ} rad/s 超过 mux 的 wz_max（speed_limits.yaml 当前 6.0），实际执行会被限幅。" >&2
+  fi
+  if [ "$DRY_RUN" = "1" ]; then
+    echo "--- [dry-run] 底盘自转: 等 ${CHASSIS_SPIN_TOPIC} 有订阅者(MINCO)后执行"
+    echo "SRM27_WS_DIR='$WS_DIR' SPIN_MAX_WZ='$CHASSIS_SPIN_ABS' '$SCRIPT_DIR/spin_control.sh' on '$CHASSIS_SPIN_WZ'"
+  else
+    if [ "$RUN_IMMEDIATELY" != "true" ]; then
+      # Gazebo 是暂停起的 (--no-run)：仿真时钟不推进，Nav2 永远不会 configure，
+      # 等下去只会白耗 CHASSIS_SPIN_READY_TIMEOUT 秒。直接起发布器，点播放后自然生效。
+      echo "[3/3] 底盘自转: Gazebo 以暂停启动(--no-run)，不等 Nav2，直接启动发布器；点播放后请求会被消费。"
+    else
+      echo "[3/3] 底盘自转: 等 Nav2 就绪（${CHASSIS_SPIN_TOPIC} 有订阅者，最长 ${CHASSIS_SPIN_READY_TIMEOUT}s）..."
+      _spin_deadline=$(( $(date +%s) + CHASSIS_SPIN_READY_TIMEOUT ))
+      _spin_subs=""
+      while [ "$(date +%s)" -lt "$_spin_deadline" ]; do
+        _spin_subs="$(bash -c "source '$WS_DIR/install/setup.bash' >/dev/null 2>&1; timeout 6 ros2 topic info '$CHASSIS_SPIN_TOPIC' 2>/dev/null" 2>/dev/null \
+          | sed -n 's/^Subscription count: //p' | head -n 1)" || true
+        if [ -n "$_spin_subs" ] && [ "$_spin_subs" != "0" ]; then
+          break
+        fi
+        sleep 2
+      done
+      if [ -z "$_spin_subs" ] || [ "$_spin_subs" = "0" ]; then
+        echo "[警告] ${CHASSIS_SPIN_READY_TIMEOUT}s 内没等到 ${CHASSIS_SPIN_TOPIC} 的订阅者（MINCO 还没起来？）" >&2
+        echo "       仍会启动发布器：等 Nav2 上线后请求会自动被消费。" >&2
+      fi
+    fi
+    if SRM27_WS_DIR="$WS_DIR" SPIN_MAX_WZ="$CHASSIS_SPIN_ABS" \
+       "$SCRIPT_DIR/spin_control.sh" on "$CHASSIS_SPIN_WZ"; then
+      printf '底盘自转  : %s rad/s 已下发 (20 Hz)；停转: %s/spin_control.sh off\n' \
+        "$CHASSIS_SPIN_WZ" "$SCRIPT_DIR"
+    else
+      echo "[警告] spin_control.sh on 失败，底盘不会自转。" >&2
+    fi
+  fi
+fi
 
 # =============================================================
 # 一步验证小陀螺导航（--verify-spin）

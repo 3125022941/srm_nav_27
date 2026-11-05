@@ -235,6 +235,9 @@ def generate_launch_description():
     use_rviz = LaunchConfiguration("use_rviz")
     use_pcd_localization = LaunchConfiguration("use_pcd_localization")
     use_lio_odometry = LaunchConfiguration("use_lio_odometry")
+    # 里程计前端（方案 §6.2）：point_lio（默认 = 旧行为）或 zlio。只透传给 nav2_stack，
+    # 分叉点在 localization_launch / navigation_launch。
+    odometry_frontend = LaunchConfiguration("odometry_frontend")
     use_velocity_smoother = LaunchConfiguration("use_velocity_smoother")
     cmd_vel_nav_topic = LaunchConfiguration("cmd_vel_nav_topic")
     map_to_odom_x = LaunchConfiguration("map_to_odom_x")
@@ -394,6 +397,7 @@ def generate_launch_description():
             "use_respawn": use_respawn,
             "use_pcd_localization": use_pcd_localization,
             "use_lio_odometry": use_lio_odometry,
+            "odometry_frontend": odometry_frontend,
             # 迁移链路：fake_vel_transform 夹在 Nav2 输出与 mux 之间（方案 §4.4）。
             "use_fake_vel_transform": use_fakeyaw_transform,
             "use_velocity_smoother": use_velocity_smoother,
@@ -485,6 +489,20 @@ def generate_launch_description():
             "use_lio_odometry",
             default_value="False",
             description="Point-LIO odometry without GICP relocalization",
+        )
+    )
+    ld.add_action(
+        DeclareLaunchArgument(
+            "odometry_frontend",
+            # 2026-11-05 切换：仿真链默认 ZLIO（这里改，导航栈/实车入口的默认值保持
+            # point_lio —— 实车的 ZLIO 参数不同，见方案 §10，不该被仿真默认值带跑）。
+            # 回退：odometry_frontend:=point_lio 或脚本开关 --lio-frontend point_lio。
+            default_value="zlio",
+            description=(
+                "里程计前端: zlio (默认, z-localization 的 frontend 包) 或 point_lio (回退)。"
+                "zlio 只在 use_lio_odometry:=True 时生效，并会同时起 zlio_bridge "
+                "做坐标系改写与换代锚定。启动脚本开关: --lio-frontend"
+            ),
         )
     )
     ld.add_action(

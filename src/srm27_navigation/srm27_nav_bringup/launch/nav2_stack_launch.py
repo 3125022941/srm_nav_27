@@ -21,6 +21,7 @@ from launch.actions import (
     DeclareLaunchArgument,
     GroupAction,
     IncludeLaunchDescription,
+    OpaqueFunction,
     SetEnvironmentVariable,
 )
 from launch.conditions import (
@@ -64,6 +65,10 @@ def generate_launch_description():
     log_level = LaunchConfiguration("log_level")
     use_pcd_localization = LaunchConfiguration("use_pcd_localization")
     use_lio_odometry = LaunchConfiguration("use_lio_odometry")
+    # 里程计前端（方案 §6.2）：point_lio（默认 = 旧行为）或 zlio。
+    # 这里只透传，真正的分叉在 localization_launch（起哪个前端 + 要不要 zlio_bridge）
+    # 与 navigation_launch（要不要 loam_interface）里。
+    odometry_frontend = LaunchConfiguration("odometry_frontend")
     map_to_odom_x = LaunchConfiguration("map_to_odom_x")
     map_to_odom_y = LaunchConfiguration("map_to_odom_y")
     map_to_odom_yaw = LaunchConfiguration("map_to_odom_yaw")
@@ -184,6 +189,15 @@ def generate_launch_description():
             "map->odom stays static (requires the odometry chain, not the prior PCD)"
         ),
     )
+    declare_odometry_frontend_cmd = DeclareLaunchArgument(
+        "odometry_frontend",
+        default_value="point_lio",
+        description=(
+            "里程计前端: point_lio (默认, 旧行为) 或 zlio。"
+            "zlio 需要 use_lio_odometry:=True，且会同时起 zlio_bridge；"
+            "回退方式就是改回 point_lio（方案 §9 的三级回退之一）"
+        ),
+    )
     declare_map_to_odom_x_cmd = DeclareLaunchArgument("map_to_odom_x", default_value="0.0")
     declare_map_to_odom_y_cmd = DeclareLaunchArgument("map_to_odom_y", default_value="0.0")
     declare_map_to_odom_yaw_cmd = DeclareLaunchArgument("map_to_odom_yaw", default_value="0.0")
@@ -248,6 +262,7 @@ def generate_launch_description():
                     "container_name": "nav2_container",
                     "use_pcd_localization": use_pcd_localization,
                     "use_lio_odometry": use_lio_odometry,
+                    "odometry_frontend": odometry_frontend,
                     "map_to_odom_x": map_to_odom_x,
                     "map_to_odom_y": map_to_odom_y,
                     "map_to_odom_yaw": map_to_odom_yaw,
@@ -262,6 +277,7 @@ def generate_launch_description():
                     "slam": slam,
                     "use_pcd_localization": use_pcd_localization,
                     "use_lio_odometry": use_lio_odometry,
+                    "odometry_frontend": odometry_frontend,
                     "use_sim_time": use_sim_time,
                     "autostart": autostart,
                     "params_file": params_file,
@@ -297,6 +313,7 @@ def generate_launch_description():
     ld.add_action(declare_log_level_cmd)
     ld.add_action(declare_use_pcd_localization_cmd)
     ld.add_action(declare_use_lio_odometry_cmd)
+    ld.add_action(declare_odometry_frontend_cmd)
     ld.add_action(declare_map_to_odom_x_cmd)
     ld.add_action(declare_map_to_odom_y_cmd)
     ld.add_action(declare_map_to_odom_yaw_cmd)
@@ -304,7 +321,42 @@ def generate_launch_description():
     ld.add_action(declare_use_velocity_smoother_cmd)
     ld.add_action(declare_cmd_vel_nav_topic_cmd)
 
+    # 里程计前端的取值校验：拼错一个字（比如 zlio_frontend:=zlIO）会让两条条件同时不成立，
+    # 结果既没有 loam_interface 也没有 zlio_bridge，odom->base_link 静默消失。
+    # 这里直接让 launch 失败，比"车不会动"好排查得多。
+    def _validate_odometry_frontend(context):
+        frontend = str(
+            context.launch_configurations.get("odometry_frontend", "point_lio")
+        ).strip()
+        if frontend not in ("point_lio", "zlio"):
+            raise RuntimeError(
+                f"odometry_frontend 只支持 point_lio / zlio，收到 '{frontend}'"
+            )
+        if frontend != "zlio":
+            return []
+        truthy = ("1", "true", "yes", "on")
+        lio = str(
+            context.launch_configurations.get("use_lio_odometry", "False")
+        ).strip().lower()
+        if lio not in truthy:
+            raise RuntimeError(
+                "odometry_frontend:=zlio 需要 use_lio_odometry:=True："
+                "ZLIO 只在纯 LIO 链路（--lio）启用；--gicp 支持见方案 §10（尚未接入）"
+            )
+        slam = str(
+            context.launch_configurations.get("slam", "False")
+        ).strip().lower()
+        if slam in truthy:
+            raise RuntimeError(
+                "odometry_frontend:=zlio 与 slam:=True 暂不兼容："
+                "slam 链路走 nav2_slam_launch.py，不经过 localization_launch，"
+                "zlio/zlio_bridge 不会被启动（方案 §10）。"
+                "建图请显式加 odometry_frontend:=point_lio（sim_slam_launch.py 已经这么做）"
+            )
+        return []
+
     # Add the actions to launch all of the navigation nodes
+    ld.add_action(OpaqueFunction(function=_validate_odometry_frontend))
     ld.add_action(bringup_cmd_group)
 
     return ld

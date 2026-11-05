@@ -6,8 +6,10 @@
 >
 > 非目标（本文第 10 节给出边界）：`--gicp`、`--slam`、实车链路。
 >
-> 状态：**方案**，未实施。落地过程中的"实际改了什么、量到了什么"另起
-> `仿真LIO前端替换Z-LIO实施记录(ai).md`。
+> 状态：**已实施**（2026-11-05）。P0/P1 已通过，`--lio-frontend zlio` 可用；
+> 默认值仍为 `point_lio`（按 §8.0，P4 通过后再切）。实际改了什么、量到了什么、
+> 与本文的偏差，见 [仿真LIO前端替换Z-LIO实施记录(ai).md](<./仿真LIO前端替换Z-LIO实施记录(ai).md>)。
+> P2~P4 的验收尚未执行。
 
 ---
 
@@ -102,10 +104,15 @@ gz imu (200 Hz, m/s²)
 
 | 契约 | 内容 | 谁依赖 |
 |---|---|---|
-| **C1** | `registered_scan`：`sensor_msgs/PointCloud2`，**odom 系**，与 `lidar_odometry` 同一时刻 | `terrain_analysis`、`terrain_analysis_ext`、`sensor_scan_generation`、（`--gicp` 时）`small_gicp` |
+| **C1** | `registered_scan`：`sensor_msgs/PointCloud2`，**odom 系**，与 `lidar_odometry` 同一时刻；**字段布局 `x, y, z, intensity`（全 float32）** | `terrain_analysis`、`terrain_analysis_ext`、`sensor_scan_generation`、（`--gicp` 时）`small_gicp` |
 | **C2** | `lidar_odometry`：`nav_msgs/Odometry`，`header.frame_id = odom`，pose = `T_odom←front_mid360`，**带 `T_base←lidar(t0)` 静态修正** | `sensor_scan_generation`、`terrain_analysis*`、`gimbal_spin_gate` |
 | **C3** | `odom` 帧的原点与轴向 = **出生点处的 `base_link`**（不是雷达系） | `map→odom` 静态恒等这条设定本身 |
 
+> ⚠ C1 的字段要求是实施阶段补上的（2026-11-05）：ZLIO 的点云只有 `x/y/z`，两个地形节点用
+> `pcl::PointCloud<pcl::PointXYZI>` 接，字段缺失会**每条消息**刷一行
+> `Failed to find match for field 'intensity'`（20 Hz × 2 节点 = 40 行/秒，把真告警淹掉）。
+> 所以 `zlio_bridge` 必须补一个常量 `intensity`。详见实施记录 §5.3。
+>
 > C3 最容易被忽略。`loam_interface` 缓存的是 `T_base_link←lidar`（在首帧时刻查一次 TF），
 > 左乘到 LIO 的位姿上，所以 `odom` 的轴向是**底盘**的轴向，不是 63°/30° 倾斜的雷达系。
 > 仿真里那次标定（`nav2_params_srm_fakeyaw.yaml:190` 附近注释）量到 `base_link + planarize=False → -0.7°`，
@@ -211,7 +218,8 @@ gz imu ─► livox/imu ──────────────────�
 `T_off` 为**首帧时刻**查到的 `T_base_link←body`（含安装外参与当时的云台角）。
 
 ```text
-T_off   = TF(base_frame ← lidar_frame)  @  stamp(first frame)      # 只查一次并缓存
+T_off   = TF(base_frame ← lidar_frame) @ stamp(first frame) · R_0⁻¹   # 只查一次并缓存
+          ↑ 安装外参 M                                    ↑ ★ 必须抵消首帧位姿 R_0
 T_odom←lidar(k) = T_off · R_k
 cloud_odom      = do_transform_cloud(frame.cloud, T_odom←lidar(k))
 lidar_odometry.pose             = T_odom←lidar(k)
@@ -219,6 +227,14 @@ lidar_odometry.header.frame_id  = odom_frame
 lidar_odometry.child_frame_id   = lidar_frame
 lidar_odometry.header.stamp     = frame.odometry.header.stamp     # 与点云同戳
 ```
+
+> ⚠ **`R_0⁻¹` 不能省**（2026-11-05 实施时修正了本文初版）。契约要求"首帧的 odom 位姿 ==
+> 安装外参 M"（odom 原点/轴向 = 出生时的 `base_link`），即 `T_off · R_0 = M`。
+> Point-LIO 的世界系按定义就是首帧机体系（`R_0 ≈ I`），所以 `loam_interface` 那样写没问题；
+> **ZLIO 不是**：`initialization.cpp` 的 `alignGravity()` 会把世界系扶正到重力朝 -Z
+> （`state.rotation = rotation * state.rotation`），于是 `R_0` 就是那次扶正旋转 —— 仿真雷达装了
+> 30° roll，`R_0` 就带 30°。少乘逆 = 把安装 roll 算两次，**整个 odom 系被绕水平轴转约 30°**，
+> `registered_scan` 与地图平面歪 30°，`terrain_analysis` 把地面当斜面。详见实施记录 §5.5。
 
 `T_off` 只缓存一次（与 `loam_interface` 的 `tf_odom_to_lidar_odom_` 行为一致）。
 **不要每帧查 TF**：那等于把云台角重新引进 odom 帧，`sensor_scan_generation` 会再减一次，姿态直接翻倍。
@@ -240,8 +256,10 @@ epoch 变化时：
 ```
 
 - `R_last_old` 用变化前最后一帧的原始位姿，`R_first_new` 用变化后第一帧的原始位姿；
-- 冷启动后 `R_first_new ≈ 单位阵`，暖重置保留速度/倾角/零偏，因此边界几乎是连续的，
-  下游最多看到一次厘米级小跳。
+- 这个式子是**相对**的、与 `R_0` 无关，所以它本来就是对的（首帧那次抵消用的也是同一形式）；
+- ⚠ 初版这里写"冷启动后 `R_first_new ≈ 单位阵`"是**错的**：那是 Point-LIO 的性质。ZLIO 新代次
+  同样会 `alignGravity()` 扶正，`R_first_new` 带的是当时的安装倾角（仿真约 30°）。锚定只关心
+  "新代次首帧 vs 老代次末帧"的相对关系，所以结论不变，但任何"假设 R ≈ 单位阵"的推导都不成立。
 
 实现上只需要两个变量。**这一步不做，`--lio` 长时间跑一定会出问题**，属于必做项。
 
@@ -486,6 +504,11 @@ zlio_bridge:
 |---|---|---|
 | P0~P3 | `point_lio` | 不动既有行为，`--lio` 仍走 Point-LIO；用 `--lio-frontend zlio` 显式试新的 |
 | P4 通过后 | `zlio` | 按需求把 `--lio` 的缺省切成 ZLIO；`--lio-frontend point_lio` 作为回退开关保留 |
+
+> **2026-11-05 实际状态**：已按需求把仿真链缺省切成 `zlio`
+> （`script/start_sim_nav.sh` 与 `nav_srm_simulation_launch.py`），但 **P2~P4 的验收还没跑过** ——
+> 也就是说"默认值已切换"是工程决定，不是"ZLIO 已经证明更好"。导航栈/实车入口的缺省仍是
+> `point_lio`（实车 ZLIO 参数不同，见 §10）。细节见实施记录 §6.3。
 
 ### 8.1 P0 —— 编译与空转（半天）
 

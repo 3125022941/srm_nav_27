@@ -10,6 +10,10 @@ install(PROGRAMS
   scripts/srm_regression_metadata.py
   scripts/srm_speed_limits_check.py
   scripts/srm_velocity_monitor.py
+  # ZLIO 前端 -> odom 系契约的桥接（loam_interface 的 ZLIO 版本）。
+  scripts/zlio_bridge.py
+  # 给 ZLIO 补上 Point-LIO 早就有的 IMU 加速度饱和检查（satu_acc）。
+  scripts/imu_saturation_guard.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -29,7 +33,8 @@ if(BUILD_TESTING)
   # 较新 pluggy 不兼容，会在收集阶段直接失败。
   find_program(SRM27_PYTHON3_EXECUTABLE NAMES python3 REQUIRED)
   find_package(ament_cmake_test REQUIRED)
-  foreach(test_name test_fakeyaw_launch_wiring test_speed_limits)
+  foreach(test_name test_fakeyaw_launch_wiring test_lio_frontend_wiring
+                    test_zlio_bridge_math test_speed_limits)
     ament_add_test(${test_name}
       GENERATE_RESULT_FOR_RETURN_CODE_ZERO
       COMMAND ${SRM27_PYTHON3_EXECUTABLE}
