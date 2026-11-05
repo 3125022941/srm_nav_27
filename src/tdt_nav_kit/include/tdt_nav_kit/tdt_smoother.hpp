@@ -67,12 +67,16 @@ private:
   int order_{5};
   int max_dx_{3};
   bool strict_collision_{false};
-  /// "close"（闭式，默认）| "path"（OSQPPath）| "corridor"（OSQPCorridor）
+  /// "path"（OSQPPath，默认）| "close"（闭式）| "corridor"（OSQPCorridor）
   ///
-  /// 默认取 close：在 RMUC 2026 仿真地图上实测，corridor 后端生成的走廊约束
-  /// 会让 OSQP 长期不收敛（状态 -4/-6），而 close 后端 0.2~19 ms 即可解出且
-  /// 经迭代碰撞检查后无碰撞。corridor 仍保留可配，待走廊生成调好后可切回。
-  std::string backend_{"close"};
+  /// 2026-11-05 在 RMUC 2026 仿真地图上用**加密后**的路径重测（11 点 / 34.46 m
+  /// 经 path_resample_step=0.30 加密到 1191 点）：
+  ///   path     : 成功，2 / 4 / 10 / 17 ms（多次）
+  ///   close    : 成功，83 ms
+  ///   corridor : 失败（OSQP 不收敛），408 ms
+  /// 三者输出几何一致（34.56 m、最大步长 0.04 m、无碰撞），故取最快的 path。
+  /// 注意：加密前 path 与 corridor 都会失败，换后端前先确认加密是开的。
+  std::string backend_{"path"};
   int collision_iter_{2};
   bool norm_time_{true};
   /// 走廊最大扩张范围（米）。不要给 1e9 之类的"不限"值：
