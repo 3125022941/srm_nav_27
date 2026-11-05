@@ -7,6 +7,51 @@
 | 工具 | 用途 | 状态 |
 | --- | --- | --- |
 | `plot_vxvywz.py` | 底盘 vx/vy/wz 波形：串口发送 + 下位机反馈，共 6 条曲线 | 可用（反馈侧接口预留） |
+| `plot_lio_gt_yaw.py` | **LIO 算的车头朝向 vs Gazebo 真值**：yaw 曲线 + 误差 + x-y 轨迹 + 速度符号，4 个面板 | 可用 |
+
+---
+
+## 2. `plot_lio_gt_yaw.py` —— LIO 航向 vs 真值
+
+回答一个问题：**"LIO 算出来的车头朝向，和 Gazebo 真值差多少、从什么时候开始差"**。
+
+四个面板（同一时间轴）：
+
+| 面板 | 内容 | 怎么读 |
+| --- | --- | --- |
+| ① yaw 曲线 | 真值 `chassis_odometry_gt` 与导航用的 `/odometry` 两条线叠一起（`--with-raw` 再加一条 `lidar_odometry`）；曲线做了 unwrap，跨越 ±180° 也不会断 | 两条线离得越远，方向越错 |
+| ② yaw 误差 | 导航 − 真值，折到 ±180°，带 ±2° 绿带 | 贴着 0 = 换算正确；在"开始动/云台转起来"之后才拉开 = LIO 动态下配准不住 |
+| ③ x-y 轨迹 | 真值轨迹 vs 导航轨迹 | 导航画出**小圆**而真值不动 → 云台离轴杠杆臂（本车 ≈13 cm）残差 |
+| ④ 速度符号 | `cmd_vel_sim.linear.x` 与 `/odometry.twist.x` | 两条线长期**不同号** → 速度方向/坐标约定反了（"前进变后退"的另一半原因） |
+
+用法：
+
+```bash
+# 不用仿真，先看工具本身（合成数据里有漂移、跳变和一个 13 cm 小圆）
+./debug_tools/plot_lio_gt_yaw.py --demo --headless
+
+# 默认输出到 <工程根>/user_test_log/，文件名带时间戳，不会互相覆盖
+#   user_test_log/lio_yaw_20261105_0232.png
+#   user_test_log/lio_yaw_20261105_0232.csv
+
+# 真机/仿真录制：与 start_sim_nav.sh 同时跑，结束时出图 + 统计
+# 默认一直录：想停的时候按 Ctrl-C，已录部分照样出图（也默认存进 user_test_log/）
+./debug_tools/plot_lio_gt_yaw.py --headless
+./debug_tools/plot_lio_gt_yaw.py --ros-args -r __ns:=/red_standard_robot1 --with-raw
+
+# 想固定时长也可以（到点自动出图）
+./debug_tools/plot_lio_gt_yaw.py --duration 60 --headless --save /tmp/lio_yaw.png
+
+# 只看数字不出图
+./debug_tools/plot_lio_gt_yaw.py --duration 30 --stats-only
+```
+
+输出：PNG + 同名 `.csv`（每行一个采样点，默认都在 `user_test_log/`），以及一段统计：平均/最大误差、
+单帧跳变次数、**命令与 LIO 速度同号比例**（<70% 基本就是方向反了）。
+
+典型复现流程：终端 A 起 `start_sim_nav.sh ... --lio`，终端 B 跑本工具，终端 C 发目标；
+车"往后走"的那几秒正好落在图上，②④ 两个面板能直接把责任落到具体那一段。
+
 
 ---
 

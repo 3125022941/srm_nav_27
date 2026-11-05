@@ -67,6 +67,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression, TextSubstitution
 from launch.utilities import normalize_to_list_of_substitutions, perform_substitutions
 from launch_ros.actions import Node
+from launch_ros.descriptions import ParameterValue
 from launch_ros.descriptions import ParameterFile
 from nav2_common.launch import RewrittenYaml
 
@@ -364,7 +365,13 @@ def generate_launch_description():
         namespace=namespace,
         parameters=[
             {"use_sim_time": use_sim_time},
-            {"spin_rate": gimbal_rate_arg},
+            # 必须显式声明类型：gimbal_spin_rate 可能是 'auto'，直接塞字符串会让
+            # 节点的 double 参数声明抛 InvalidParameterTypeException（实测节点当场退出）。
+            {
+                "spin_rate": ParameterValue(
+                    effective_gimbal_rate, value_type=float
+                )
+            },
             {"odometry_topic": "lidar_odometry"},
             {"command_topic": "cmd_gimbal_vel"},
         ],

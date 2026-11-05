@@ -108,7 +108,11 @@ point_lio:
     preprocess:
       lidar_type: 2                                     # 激光雷达类型：1 Livox，2 Velodyne，3 Ouster
       scan_line: 32                                     # 激光雷达扫描线数
-      scan_rate: 20                                     # 仿真雷达扫描频率（Hz）
+      # ★ 必须等于雷达真实出货频率：几何 YAML 的 lidar.update_rate = 10 Hz。
+      #   原来写 20，导致 Point-LIO 给每个点算的时间戳整体错一倍 —— 去畸变等于没做。
+      #   云台静止时只影响车体平移（量小、看不出来）；**云台一自转就致命**：
+      #   每帧云台已转 ~0.2 rad，残差把位姿顶飞（2026-11-04 实测：0.87 m / 1.06 m 位姿跳变）。
+      scan_rate: 10                                     # 仿真雷达扫描频率（Hz），必须 = lidar.update_rate
       timestamp_unit: 0                                 # 点云时间戳单位：0秒、1毫秒、2微秒、3纳秒
       blind: 0.5                                        # 忽略雷达近距离盲区半径（米）
 
@@ -158,11 +162,23 @@ loam_interface:
     state_estimation_topic: "aft_mapped_to_init"       # 状态估计输入话题
     registered_scan_topic: "cloud_registered"          # 配准点云输入话题
     odom_frame: "odom"                                  # 里程计坐标系
-    base_frame: "base_link"                        # 机器人底盘坐标系
+    base_frame: "base_link"                        # 机器人底盘坐标系（对齐用的安装角从这里读）
     lidar_frame: "front_mid360"                         # 激光雷达坐标系
     # Gazebo is planar; prevent Point-LIO's unobservable vertical attitude
     # drift from moving the simulated robot or cloud.
-    planarize_pose: True
+    # ★ 2026-11-04 实测：LIO 机体系=雷达系（30° roll + 63° yaw 倾斜）。
+    #   base_frame 填雷达帧后，这里的 planarize 会把**倾斜的雷达系**当成底盘压平，
+    #   实测反而引入 -58° 的 yaw 偏差（真值 0° vs 导航 -56~-60°）。
+    #   关掉它：让 sensor_scan_generation 用实时 TF（含安装外参+云台关节）一次算清。
+    # ★ 2026-11-04 实测标定（真值 vs /odometry，反复量了 7 次）：
+    #   base_frame=base_link + planarize_pose=True  -> 车头朝向偏 +158.4°
+    #   base_frame=front_mid360 + planarize=True    -> 偏 -59.9°
+    #   base_frame=front_mid360 + planarize=False   -> 偏 -59.9°
+    #   base_frame=base_link  + planarize=False     -> 偏 -0.7° ✅（当前配置）
+    #   planarize 会把"倾斜的雷达系"（roll30°/yaw63° 安装）当底盘压平，
+    #   yaw 被拉偏几十度，进而让点云地图与栅格地图整体错开一个大角度。
+    #   关掉后，安装外参与云台关节只由下游 sensor_scan_generation 的实时 TF 算一次。
+    planarize_pose: False
 
 sensor_scan_generation:
   ros__parameters:
@@ -182,7 +198,9 @@ sensor_scan_generation:
     # 仿真真值的 lidar_odometry 只有约 3.5 Hz（间隔 0.25~0.30 s）；真值模式下本节点的
     # odometry 输出被 remap 到 sensor_odometry 且无订阅者，0.20 s 会每帧刷告警。
     # 放宽到 0.40 s 仍保留“长间隔不产生差分速度”的保护。
-    max_sample_gap: 0.40            # 差分速度可用的最大采样间隔（秒）
+    # LIO 模式实测 Point-LIO 输出 ~6-7 Hz，偶发 0.3~0.5 s 间隔；0.40 会把它们全丢掉，
+    # 于是 /odometry 静默 → fake_vel_transform 与控制器双双失锁。放宽到 0.60。
+    max_sample_gap: 0.60            # 差分速度可用的最大采样间隔（秒）
     max_position_jump: 0.75         # 单次采样允许的最大平移跳变（米）
     max_yaw_jump: 1.20              # 单次采样允许的最大航向跳变（弧度）
 
@@ -510,7 +528,7 @@ controller_server:
         tolerance: 0.0                  # 0 = 用目标检查器的 xy 容差（本文件 0.15 m）
         exit_margin: 0.15
       state:                                            # 状态适配层
-        max_sample_gap: 0.20                            # 差分速度可用的最大采样间隔（秒）
+        max_sample_gap: 0.40                            # 差分速度可用的最大采样间隔（秒）；LIO 模式需 > odom 抖动
         max_position_jump: 0.75                         # 位置跳变阈值（米），超过按定位重置
         max_yaw_jump: 1.20                              # 航向跳变阈值（弧度）
         velocity_filter_alpha: 0.35                     # 速度一阶低通系数（0 表示关闭）
@@ -922,7 +940,7 @@ fake_vel_transform:
     # 超过这个年龄没有里程计就输出零速、并停止更新 fake TF（方案 §4.2）：
     # 0.25 s ≈ 真值里程计(50 Hz)/Point-LIO(50~100 Hz) 的 12~25 个周期，既能吸收单帧
     # 抖动，又不会让「定位已经死了车还在跑」。
-    odom_timeout: 0.25
+    odom_timeout: 0.60
     cmd_spin_topic: cmd_spin                   # 迁移模式下收到非零值只告警、只计数
     diagnostics_period: 0.5
 

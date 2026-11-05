@@ -111,7 +111,11 @@ point_lio:
     preprocess:
       lidar_type: 2                                     # 激光雷达类型：1 Livox，2 Velodyne，3 Ouster
       scan_line: 32                                     # 激光雷达扫描线数
-      scan_rate: 20                                     # 仿真雷达扫描频率（Hz）
+      # ★ 必须等于雷达真实出货频率：几何 YAML 的 lidar.update_rate = 10 Hz。
+      #   原来写 20，导致 Point-LIO 给每个点算的时间戳整体错一倍 —— 去畸变等于没做。
+      #   云台静止时只影响车体平移（量小、看不出来）；**云台一自转就致命**：
+      #   每帧云台已转 ~0.2 rad，残差把位姿顶飞（2026-11-04 实测：0.87 m / 1.06 m 位姿跳变）。
+      scan_rate: 10                                     # 仿真雷达扫描频率（Hz），必须 = lidar.update_rate
       timestamp_unit: 0                                 # 点云时间戳单位：0秒、1毫秒、2微秒、3纳秒
       blind: 0.5                                        # 忽略雷达近距离盲区半径（米）
 

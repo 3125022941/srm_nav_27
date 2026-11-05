@@ -491,3 +491,9 @@ ros2 run pcl_ros pcd_to_pointcloud --ros-args \
 ```bash
 ./script/start_real_nav.sh -m 227_1011 --controller minco --prior-pcd 227_1011_mapframe
 ```
+
+# 2026-11-5
+### 示波工具
+```bash
+./debug_tools/plot_lio_gt_yaw.py --headless
+```

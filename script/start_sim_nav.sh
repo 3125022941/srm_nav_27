@@ -272,7 +272,14 @@ esac
 # 云台自转：**默认就转**（2.0 rad/s），与航向策略、有没有导航目标都无关 ——
 # 操作手要求"云台一直匀速转"。要它停用 --no-gimbal-spin 或 GIMBAL_SPIN_WZ=0。
 if [ -z "$GIMBAL_SPIN_WZ" ]; then
-  GIMBAL_SPIN_WZ="2.0"
+  # LIO 模式默认 1.0 rad/s：2 rad/s 时每帧（10 Hz）云台要转 11.5°，
+  # 在这个点密度（600 点/帧）下 Point-LIO 的里程计会抖；1.0 稳得多。
+  # 真值里程计模式不受此限制，仍按 2.0。
+  # 此时 USE_LIO_ODOMETRY 可能还是原始的 0/1（归一化在后面），两种写法都认。
+  case "${USE_LIO_ODOMETRY:-0}" in
+    1|true|True|TRUE) GIMBAL_SPIN_WZ="1.0" ;;
+    *) GIMBAL_SPIN_WZ="2.0" ;;
+  esac
 fi
 case "$GIMBAL_SPIN_WZ" in
   ''|*[!0-9.eE+-]*) echo "[错误] 云台自转速度必须是数字 (rad/s): $GIMBAL_SPIN_WZ" >&2; exit 2 ;;
