@@ -47,6 +47,9 @@ ament_export_dependencies(Eigen3)
 # 上游头文件随包安装，便于阶段二接入 MinimumSnap / SfcSquare 与来源溯源。
 # 注意：vendor/ 下的头只做安装，不通过 INSTALL_INTERFACE 导出，避免下游误依赖。
 install(DIRECTORY vendor/src/ DESTINATION include/${PROJECT_NAME}/vendor)
+# 带平滑的行为树：让 controller 拿到平滑后的稠密路径，
+# 否则 YAstar 的稀疏路径会被 transformGlobalPlan 裁成单点（详见该文件头注释）。
+install(DIRECTORY behavior_trees DESTINATION share/${PROJECT_NAME})
 install(FILES
   vendor/LICENCE
   THIRD_PARTY_NOTICES.md

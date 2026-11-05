@@ -190,12 +190,40 @@ YAstar 的路径点少 54 倍、规划快约 2 倍；TDT 平滑器把 6 m 的稀
 「建议 speed 大于 40，acc 大于 10」，按 m/s 直觉给 2.0 会让时间分配差一个数量级、
 QP 条件数变差（改前 `close` 后端同样失败）。
 
+### 闭环验证：行为树必须补 SmoothPath（2026-11-05 追加）
+
+原 `navigate_to_pose_w_replanning_and_recovery.xml` 是「ComputePathToPose → FollowPath」
+直连，**没有 SmoothPath 节点**——也就是说 `smoother_server` 只在手动调用动作时用过，
+真实导航链路里从来没生效过。
+
+后果在 TDT 规划器上尤其明显：YAstar 输出的是稀疏路径（短目标只有 2~11 个点），
+而 `srm27_omni_pid_controller::transformGlobalPlan()` 会按局部代价地图范围裁剪，
+把超过 `max_costmap_extent`（本配置 5×5 m → 2.5 m）的点全部丢掉。
+实测裁剪后 `local_plan` **只剩 1 个点、距机器人 0.03 m**，
+`getLookAheadPoint()` 拿不到前视点，`theta_dist` 退化成噪声，
+速度趋零 → "车不动 + Failed to make progress"。
+
+本包新增 `behavior_trees/navigate_to_pose_w_smoothing.xml`：在规划与跟随之间插入
+`SmoothPath`（Humble 端口名：`unsmoothed_path` / `smoothed_path`），
+两份参数文件的 `default_nav_to_pose_bt_xml` 已指向它。
+
+效果：同一目标下单次导航的位移从 **0.31 m / 150 s** 提升到 **5.43 m / 120 s**，
+`local_plan` 从 1 点恢复到 14 点，前视点方位角稳定。
+
+> 注意：这一条不是 TDT 特有的缺陷。用仓库原始链路（ThetaStar + SimpleSmoother）
+> 跑同一目标，行为与 TDT 完全一致——说明稀疏路径 + 无平滑是**全栈**的问题，
+> 只是 TDT 的路径更稀而先暴露。
+
 ### 未能完成的部分（环境限制，非插件问题）
 
-闭环行驶只走了 0.66 m / 150 s。原因是仿真在无头软件渲染下 RTF 仅 **0.36**，
-且日志持续报 `tf2_buffer: Detected jump back in time. Clearing TF buffer` 与
-`Lookup would require extrapolation`，`follow_path` 反复 Aborting。
-这是容器 + llvmpipe 的仿真环境问题，插件本身在规划/平滑两级的验证都已通过。
+闭环仍未收敛到目标：机器人会持续朝某个方向偏移并最终停在地图边界外
+（`rmuc_2025` 地图 y 上限 6.76，实测停在 y≈8.9）。原始链路与 TDT 链路表现一致，
+因此判断为仿真侧（世界与地图的坐标对齐、或底盘速度注入与 TF 的一致性）问题，
+不是插件缺陷。排查所需的观测已经脚本化（`probe_plan.py` / `probe_localplan.py` /
+`compare_cmd.py`），下一步应从 TF 帧（`odom` / `base_link` 是否存在且与真值一致）入手。
+
+无头软件渲染下 RTF 约 **0.78**（把雷达从 20 Hz / 1875×32 降到 10 Hz / 1200×16 后；
+未降密前 0.59），已不再是主要瓶颈。
 
 ## 阶段二进展与遗留
 
