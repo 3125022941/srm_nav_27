@@ -61,6 +61,47 @@ std::vector<Eigen::Vector2f> toPoints(const nav_msgs::msg::Path & path)
   return points;
 }
 
+/// 按最大段长线性加密路径。上游碰撞检查按输入点连线判定，
+/// 稀疏输入会让样条在拐角切进膨胀层，因此先降到 0.3 m 量级再求解。
+std::vector<Eigen::Vector2f> resamplePath(
+  const std::vector<Eigen::Vector2f> & points, float step, int max_points)
+{
+  if (step <= 1e-3f || points.size() < 2) {
+    return points;
+  }
+
+  std::vector<Eigen::Vector2f> dense;
+  dense.reserve(points.size() * 4);
+
+  for (std::size_t i = 0; i + 1 < points.size(); ++i) {
+    const Eigen::Vector2f a = points[i];
+    const Eigen::Vector2f b = points[i + 1];
+    const float dist = (b - a).norm();
+    dense.push_back(a);
+
+    if (dist > step) {
+      const int segments = static_cast<int>(std::ceil(dist / step));
+      for (int k = 1; k < segments; ++k) {
+        const float t = static_cast<float>(k) / static_cast<float>(segments);
+        dense.push_back(a + t * (b - a));
+        if (static_cast<int>(dense.size()) >= max_points) {
+          break;
+        }
+      }
+    }
+    if (static_cast<int>(dense.size()) >= max_points) {
+      break;
+    }
+  }
+  dense.push_back(points.back());
+
+  if (static_cast<int>(dense.size()) > max_points) {
+    dense.resize(static_cast<std::size_t>(max_points));
+    dense.back() = points.back();
+  }
+  return dense;
+}
+
 /// 用平滑后的点重写 path，保留原 header（frame_id / stamp）。
 void writeBack(
   nav_msgs::msg::Path & path,
@@ -140,6 +181,10 @@ void TdtSmoother::configure(
   declare_parameter_if_not_declared(node, p + "max_acc", rclcpp::ParameterValue(max_acc_));
   declare_parameter_if_not_declared(node, p + "min_points", rclcpp::ParameterValue(min_points_));
   declare_parameter_if_not_declared(
+    node, p + "path_resample_step", rclcpp::ParameterValue(path_resample_step_));
+  declare_parameter_if_not_declared(
+    node, p + "path_resample_max_points", rclcpp::ParameterValue(path_resample_max_points_));
+  declare_parameter_if_not_declared(
     node, p + "orientation_mode", rclcpp::ParameterValue(orientation_mode_));
 
   converter_cfg_.occupancy_threshold =
@@ -158,6 +203,10 @@ void TdtSmoother::configure(
   max_speed_ = static_cast<float>(node->get_parameter(p + "max_speed").as_double());
   max_acc_ = static_cast<float>(node->get_parameter(p + "max_acc").as_double());
   min_points_ = static_cast<int>(node->get_parameter(p + "min_points").as_int());
+  path_resample_step_ =
+    static_cast<float>(node->get_parameter(p + "path_resample_step").as_double());
+  path_resample_max_points_ =
+    static_cast<int>(node->get_parameter(p + "path_resample_max_points").as_int());
   orientation_mode_ = node->get_parameter(p + "orientation_mode").as_string();
 }
 
@@ -230,7 +279,14 @@ bool TdtSmoother::smooth(
 
   // 3) 填输入。上游默认 backend=Close、normTime=false、collisionIter=2，
   //    与 README 示例不同，因此这里全部显式设置，不依赖库默认。
-  const std::vector<Eigen::Vector2f> points = toPoints(path);
+  const std::vector<Eigen::Vector2f> raw_points = toPoints(path);
+  const std::vector<Eigen::Vector2f> points =
+    resamplePath(raw_points, path_resample_step_, path_resample_max_points_);
+  if (points.size() != raw_points.size()) {
+    RCLCPP_DEBUG(
+      node->get_logger(), "TdtSmoother: 路径加密 %zu -> %zu 点（步长 %.2f m）",
+      raw_points.size(), points.size(), static_cast<double>(path_resample_step_));
+  }
 
   MinimumSnap::SolveInput input;
   input.setPath(points);

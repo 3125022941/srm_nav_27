@@ -39,7 +39,7 @@
                         unsmoothed_path="{path}"
                         smoothed_path="{smoothed_path}"
                         max_smoothing_duration="1.0"
-                        check_for_collisions="false"/>
+                        check_for_collisions="true"/>
           </Sequence>
         </RateController>
         <RecoveryNode name="FollowPath"

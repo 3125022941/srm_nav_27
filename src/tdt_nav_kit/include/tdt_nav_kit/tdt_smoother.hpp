@@ -84,6 +84,16 @@ private:
 
   /// 少于该点数的路径不做平滑（直接返回 true）。
   int min_points_{3};
+  /// 平滑前的路径加密步长（米）。0 表示不加密。
+  ///
+  /// 上游 MinimumSnap 的碰撞检查是按「相邻输入点连线/样条采样」判定的，
+  /// 输入路径越稀，样条在拐角处越容易切进膨胀层：实测 11 点 / 段长 5.7 m 的
+  /// YAstar 路径在 check_for_collisions=true 时**必定失败**并原样返回。
+  /// 先按该步长线性插值，段长降到 0.3 m 量级，碰撞检查才能通过。
+  /// 只影响送进求解器的采样，不影响输出语义（输出仍是平滑后的轨迹）。
+  float path_resample_step_{0.3f};
+  /// 加密后的点数上限，防止病态输入（极长路径 + 极小步长）撑爆内存。
+  int path_resample_max_points_{2000};
   /// "identity"（w=1）或 "tangent"（由相邻点求 yaw）。
   std::string orientation_mode_{"tangent"};
 };

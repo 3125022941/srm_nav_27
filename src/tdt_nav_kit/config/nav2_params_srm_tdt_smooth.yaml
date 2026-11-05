@@ -590,6 +590,10 @@ smoother_server:
       corridor_shrink: 0.0                                # 走廊收缩（米）
       max_speed: 50.0                                     # 仅影响时间分配，上游建议>40
       max_acc: 20.0                                       # 仅影响时间分配，上游建议>10
+      # 平滑前按该步长线性加密：稀疏路径（YAstar 段长可达 5.7 m）会让样条在拐角
+      # 切进膨胀层，check_for_collisions=true 时必然失败并原样返回。0 表示不加密。
+      path_resample_step: 0.30                            # 加密步长（米），0 = 关闭
+      path_resample_max_points: 2000                      # 加密后点数上限（防病态输入）
       min_points: 3                                       # 少于此点数不做平滑
       orientation_mode: "tangent"                         # 由相邻点求 yaw
 
