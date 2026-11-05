@@ -9,13 +9,19 @@
 #
 # 与上游默认值的三处差异
 # ======================
-# 1) sensor.body_from_lidar.translation → [0, 0, 0]
-#    仿真 gz 的 IMU 直接挂在雷达 link 上（model_builder.py 里 <sensor
-#    name="front_mid360_imu"> 写在 lidar['link_name'] 的 <link> 内），雷达相对该 link
-#    只有 0 0 0.03 的位姿；而 point_lio 的 extrinsic_T 也取了 [0,0,0]（忽略那 3 cm）。
-#    第一版按"对齐 point_lio"取 0，保证 A/B 只差 LIO 本身；P3 对比通过后可以试
-#    [0, 0, 0.03]（LiDAR 原点在 IMU 系中的位置），看残差是否更小。
-#    ⚠ 实车对应值是 [-0.011, -0.02329, 0.04412]，别抄错。
+# 1) sensor.body_from_lidar.translation → [0, 0, 0.03]（2026-11-06 起；最初为 [0,0,0]）
+#    依据（model_builder.py 生成的 SDF，front_mid360 这个 link 里）：
+#      <sensor name="front_mid360_imu"   type="imu">      ← 无 <pose>，即**在 link 原点**
+#      <sensor name="front_mid360_lidar" type="gpu_lidar"> <pose>0 0 0.03 0 0 0</pose>
+#    也就是说：IMU = link 原点，雷达传感器在 link 系里 +3 cm（z 向上）。
+#    `body_from_lidar` 的语义是"把雷达坐标转换到 IMU(机体系)"，translation = **雷达原点在
+#    IMU 系中的坐标**，所以这里就该是 (0, 0, +0.03)。
+#    gz 的点云数据产生在**传感器系**（+3 cm 处），只是 header.frame_id 写成了 link 名
+#    （`<ignition_frame_id>` 都是 front_mid360），所以这 3 cm 必须在这里补，否则整帧
+#    点云相对机体系少 3 cm。
+#    ⚠ point_lio 的 extrinsic_T 写的是 [0,0,0]（当年忽略了这 3 cm），所以本项与 Point-LIO
+#      的 A/B **不再严格等价**：ZLIO 这边更接近真实几何。要严格 A/B 就临时改回 [0,0,0]。
+#    ⚠ 实车对应值是 [-0.011, -0.02329, 0.04412]（MID-360 的 lidar→IMU），别抄错。
 # 2) sensor.minimum_range / maximum_range 保持 0.5 / 100.0 = point_lio 的 blind 与量程，
 #    同样是为了 A/B 只有一个自变量。
 # 3) initialization.window_frames=20（20 Hz 雷达 → 1.0 s 初始化窗口）、
@@ -38,8 +44,9 @@ sensor:
     body_from_lidar:
         # 外参旋转四元数，按 x、y、z、w 排列。仿真雷达与 IMU 同 link，无旋转。
         rotation_xyzw: [0, 0, 0, 1]
-        # Mid-360 雷达原点在 IMU 系中的位置，m（见文件头差异说明 1）。
-        translation: [0, 0, 0]
+        # Mid-360 雷达原点在 IMU 系中的位置，m（见文件头差异说明 1）：
+        # 仿真里 IMU 在 link 原点、雷达传感器在 link 系 +0.03 m。
+        translation: [0, 0, 0.03]
 
 # 初始化参数。
 initialization:

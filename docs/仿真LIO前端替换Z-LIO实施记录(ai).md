@@ -441,6 +441,37 @@ time = (point_id % horizon_scan) * scan_period / horizon_scan;   // 秒，相对
 
 **回退**：把 `scan_period` 改回 `0.05`（必须 = `1/lidar.update_rate`，几何 YAML 里是 20 Hz）。
 
+### 5.7 `body_from_lidar.translation` 改为 `[0, 0, 0.03]`（回归真实几何）
+
+方案 §5.3 本来就把这一步排在"验证通过后再试"；2026-11-06 按需求提前做了。
+
+**依据**（`srm27_robot_description/model_builder.py` 生成的 SDF，
+`<link name="front_mid360">` 内）：
+
+| 传感器 | 位姿（相对 link） | 说明 |
+|---|---|---|
+| `<sensor name="front_mid360_imu" type="imu">` | **无 `<pose>`** → 在 link 原点 | 这条链用的就是它（`ros_gz_bridge.yaml` 把 `livox/imu` 映到 `link/front_mid360/sensor/front_mid360_imu/imu`） |
+| `<sensor name="front_mid360_lidar" type="gpu_lidar">` | `<pose>0 0 0.03 0 0 0</pose>` | 雷达传感器在 link 系里 **+3 cm** |
+
+`body_from_lidar` 的语义是"把雷达坐标转换到 IMU/机体系"，`translation` = **雷达原点在 IMU 系中的
+坐标** → 正确的是 `(0, 0, +0.03)`。gz 的点云数据产生在**传感器系**，而 `<ignition_frame_id>` 两个
+传感器都写成了 link 名（`front_mid360`），所以这 3 cm 必须在配置里补。
+
+**改完影响什么**：
+
+| 项 | 影响 |
+|---|---|
+| 点云 | ZLIO 把点从传感器系搬到机体系（+3 cm），`registered_scan` 随之整体平移 3 cm |
+| 位姿语义 | ZLIO 的 body 现在**确实等于** link 原点（IMU），与 bridge 的 `lidar_frame: front_mid360`、与 TF 完全对齐 |
+| 旧值（0）的隐性错误 | ZLIO 那时把"雷达传感器系"当成 body，而 bridge 仍把它标成 `front_mid360`（link 原点）→ 整条位姿链里混进一个**恒定 3 cm 偏置**（方向由 30° roll + 63° yaw 的安装角决定，换算到车体系主要是横向/竖直） |
+| `T_off` / 桥接 / TF | **不受影响**：`T_off` 只来自 TF(base←front_mid360) |
+
+**⚠ A/B 注意**：`point_lio.extrinsic_T` 写的是 `[0, 0, 0]`（当年忽略这 3 cm），所以这一项改了之后
+**两个前端不再严格等价** —— ZLIO 这边更接近真实几何。要严格 A/B 就临时把这里改回 `[0, 0, 0]`。
+
+**怎么判断值不值得**：看 `terrain_map` 的"地面厚度/平整度"与静态地图的贴合度，以及示波 ② 的航向
+误差是否有系统性改善（3 cm 的偏置主要是平移项，对 yaw 影响很小，不要指望它解决大漂移）。
+
 ---
 
 ## 6. 怎么用 / 怎么回退
