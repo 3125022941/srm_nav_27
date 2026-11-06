@@ -16,6 +16,7 @@
 #ifndef FAKE_VEL_TRANSFORM__FAKE_VEL_TRANSFORM_HPP_
 #define FAKE_VEL_TRANSFORM__FAKE_VEL_TRANSFORM_HPP_
 
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -80,8 +81,14 @@ private:
   void cmdSpinCallback(const example_interfaces::msg::Float32::SharedPtr msg);
 
   // ---- nav_se2 模式路径 ----
-  /// \brief 用最新有效 yaw 做一次坐标转换并发布；无法转换时输出零速。
+  /// \brief 用"外推到指令生效时刻"的 yaw 做一次坐标转换并发布；无法转换时输出零速。
   void publishTransformedVelocity(const geometry_msgs::msg::Twist & _cmd);
+  /// \brief 记录底盘真正执行的角速度指令（mux 输出），供外推积分用。
+  void chassisCmdCallback(const geometry_msgs::msg::Twist::SharedPtr msg);
+  /// \brief 对"分段常值"的 wz 指令在 [from, to] 上积分；调用方必须已持有 state_mutex_。
+  /// \param[out] partial 缓存覆盖不到 from 时为 true（只积分到能覆盖的那一段）。
+  double integrateCommandWz(
+    const rclcpp::Time & from, const rclcpp::Time & to, bool & partial) const;
   /// \brief 发布零速（无有效 yaw / 非有限输入 / 里程计超时）。
   void publishZeroVelocity();
   /// \brief 发布 `base_link -> base_link_fake`，时间戳取里程计消息时间。
@@ -99,6 +106,10 @@ private:
   rclcpp::Subscription<example_interfaces::msg::Float32>::SharedPtr cmd_spin_sub_;
   /// \brief nav_se2 模式的里程计订阅（普通订阅：KEEP_LAST=1，不做任何缓冲）。
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+  /// \brief 底盘真正执行的角速度指令（mux 输出 cmd_vel_sim）；外推积分用它。
+  rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr chassis_cmd_sub_;
+  /// \brief 外推结果的高频出口（示波用）：x=预测 yaw, y=odom yaw, z=积分量（rad）。
+  rclcpp::Publisher<geometry_msgs::msg::Vector3>::SharedPtr yaw_debug_pub_;
   message_filters::Subscriber<nav_msgs::msg::Odometry> odom_sub_filter_;
   message_filters::Subscriber<nav_msgs::msg::Path> local_plan_sub_filter_;
   using SyncPolicy =
@@ -141,6 +152,40 @@ private:
   bool yaw_usable_{false};
   double last_odom_steady_{0.0};
   double last_odom_age_{0.0};
+
+  // ---- 仿真时间外推（2026-11-06）----
+  //
+  // 为什么不用墙钟：仿真比实时慢（实测 RTF≈0.77），而 `wz` 的单位是"弧度/仿真秒"。
+  // 拿墙钟年龄去外推会多转约 1/0.77−1 ≈ 30%；拿墙钟年龄去对仿真时间的 stamp 更是
+  // 两个时间轴。所以这里：**超时判断继续用墙钟**（仿真暂停时也要能判死），
+  // **外推一律用节点时钟（use_sim_time）+ odom.header.stamp**。
+  //
+  // 外推公式（d = actuation_delay_，指令→底盘执行的延迟）：
+  //   yaw(now + d) = yaw_odom(stamp) + ∫[stamp−d → now] wz_cmd(s) ds
+  // 积分而不是"当前 wz × 年龄"：自转的加减速段（MINCO max_angular_accel=15）已经被
+  // 如实地包含在指令序列里了。
+  struct WzSample
+  {
+    rclcpp::Time stamp;
+    double wz;
+  };
+  /// \brief 最近约 wz_history_window_ 秒的 (仿真时刻, wz 指令)，按时间递增。
+  std::deque<WzSample> wz_history_;
+  std::string chassis_cmd_vel_topic_;
+  std::string yaw_debug_topic_;
+  /// \brief 指令下发到底盘真正执行的延迟（仿真秒）；仿真里估计 10~30 ms，需标定。
+  double actuation_delay_{0.02};
+  double wz_history_window_{1.0};
+  /// \brief 最近一条里程计的时间戳（仿真时间，来自 header.stamp）。
+  rclcpp::Time last_odom_stamp_{0, 0, RCL_ROS_TIME};
+  bool has_odom_stamp_{false};
+  /// \brief 转换实际用到的 yaw（= odom yaw + 外推量），诊断/示波用它。
+  double predicted_yaw_{0.0};
+  /// \brief 本次外推的积分区间长度（仿真秒）与积分结果（rad）。
+  double extrapolation_span_{0.0};
+  double last_wz_integral_{0.0};
+  uint64_t extrapolation_count_{0};
+  uint64_t extrapolation_partial_count_{0};
 
   // 诊断计数
   uint64_t input_count_{0};

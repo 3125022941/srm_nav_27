@@ -1031,6 +1031,14 @@ fake_vel_transform:
     odom_timeout: 0.60
     cmd_spin_topic: cmd_spin                   # 迁移模式下收到非零值只告警、只计数
     diagnostics_period: 0.5
+    # ---- yaw 外推（2026-11-06）----
+    # 转换要用"指令真正生效那一刻"的航向：yaw(now+d) = yaw_odom(stamp) + ∫[stamp−d → now] wz_cmd。
+    # wz 取 mux 的输出（底盘真正执行的那条，已钳位/超时清零），不取本节点的输入。
+    # 全部用仿真时间（节点时钟 + odom.header.stamp）；墙钟只用于 odom_timeout 判死。
+    chassis_cmd_vel_topic: cmd_vel_sim         # 外推的 wz 来源 = mux 输出
+    actuation_delay: 0.02                      # 指令→底盘执行的延迟（**仿真秒**），需标定
+    wz_history_window: 1.0                     # 指令历史保留时长（秒），够覆盖 odom 年龄即可
+    yaw_debug_topic: yaw_debug                 # 外推结果的高频出口，示波用（Vector3: 预测/odom/积分）
 
 velocity_smoother:
   ros__parameters:

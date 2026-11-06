@@ -150,13 +150,16 @@ srm_nav_27/
 
 ### 3.1 实车链路
 
+2026-11-06 起实车默认链路与仿真**同构**（MINCO + fakeyaw + mux），旧 Omni 链路仍可用
+`./script/start_real_nav.sh -c omni` 启动。两条实车链路的差别只在"导航是否拥有 wz"：
+
 ```text
-Livox Mid-360 ──► livox_ros_driver2 ──► Point-LIO ──► loam_interface
-                        │                    │              │
-                        │                    │              v
-                        │                    │      registered_scan（map 系）
-                        │                    v
-                        │           sensor_scan_generation ──► odom → base_link
+Livox Mid-360 ──► livox_ros_driver2 ──► Point-LIO 或 ZLIO ──► loam_interface / zlio_bridge
+                        │                                │              │
+                        │                                │              v
+                        │                                │      registered_scan（odom 系）
+                        │                                v
+                        │                       sensor_scan_generation ──► odom → base_link
                         v
                  terrain_analysis ──► terrain_map      ─┐
                  terrain_analysis_ext ──► terrain_map_ext ─┤
@@ -165,23 +168,39 @@ Livox Mid-360 ──► livox_ros_driver2 ──► Point-LIO ──► loam_int
                                                           │
   ┌───────────────────────────────────────────────────────┘
   v
-Theta* 全局规划 ──► SimpleSmoother ──► OmniPID 局部控制
+Theta* 全局规划 ──► SimpleSmoother ──► MINCO-MPC（或 OmniPID）局部控制
                                             │
                                             v
-                                   cmd_vel_controller ──► velocity_smoother
-                                                                │
-                                                                v
-                                                  cmd_vel_nav2_result
-                                                                │
-                                                                v
-                                                     fake_vel_transform
-                                                                │
-                                                                v
-                                                        cmd_vel_chassis
-                                                                │
-                                                                v
-                                              srm27_nav_protocol ──► 串口 ──► 下位机 C 板
+                     ╔══════════════════════════════════════════════════╗
+                     ║ 迁移链（默认，导航拥有 wz / 参考系 base_link_fake）║
+                     ║  cmd_vel_nav_fake → fake_vel_transform(nav_se2)   ║
+                     ║   → cmd_vel_nav_body → srm_cmd_mux                ║
+                     ║   → cmd_vel_chassis → srm27_nav_protocol → 串口    ║
+                     ╚══════════════════════════════════════════════════╝
+                     ╔══════════════════════════════════════════════════╗
+                     ║ 旧链（-c omni，导航不控自转）                      ║
+                     ║  cmd_vel_nav2_result → fake_vel_transform(legacy) ║
+                     ║   → cmd_vel_chassis → srm27_nav_protocol → 串口    ║
+                     ╚══════════════════════════════════════════════════╝
+                                                                   │
+                                                                   v
+                                               下位机 C 板（执行 vx/vy/wz）
 ```
+
+迁移链的四个要点（细节见 [`docs/仿真链迁移实车实施记录(ai).md`](./docs/仿真链迁移实车实施记录%28ai%29.md)）：
+
+1. **导航参考系 = `base_link_fake`**（与 odom 平行、朝向稳定）：底盘自转不会拖着代价地图和路径一起转；
+2. **MINCO 输出 odom 对齐的平移速度**，唯一一次 `R(-yaw)` 在 `fake_vel_transform`（`nav_se2`）里做；
+   控制器与转换器都做就是"重复旋转"（车头 ≈ 90° 时前进变侧移）；
+3. **`wz` 由上位机（导航）拥有**：`yaw_policy.mode=se2`（跟路径切线）或 `spin`（小陀螺，
+   `rotation_cmd` 请求直接进 MINCO）。旧链是 `xy_only`，smoother 的 yaw 界被钳成 0；
+4. **`srm_cmd_mux` 是 `cmd_vel_chassis` 的唯一发布者**：负责限幅、导航超时清零与
+   `stop_all`/`resume_all` 软件闸。速度限幅仍只有一处：`config/real/speed_limits.yaml`
+   （`@fakeyaw` 段放开 smoother 的 yaw，`srm_cmd_mux` 段给出 `wz_max`）。
+
+⚠ 云台自转（仿真里的 `--gimbal-spin`）**实车暂不支持**：云台由下位机驱动，当前协议不回传
+云台关节角，上位机无法把云台角从 `base_link` yaw 里剥掉。协议补齐后可用
+`--gimbal-joint-topic` 接入（中继节点转成 `/joint_states`）。
 
 ### 3.2 仿真链路
 
@@ -970,6 +989,8 @@ ros2 topic echo /<ns>/diagnostics --once        # 超时 / 限幅 / 丢弃计数
 | [`docs/SRM仿真与导航自转控制实施方案.md`](./docs/SRM仿真与导航自转控制实施方案.md) | 本次 SRM 仿真与自转控制重构的权威方案 |
 | [`docs/SRM仿真与自转控制实现(ai).md`](./docs/SRM仿真与自转控制实现%28ai%29.md) | **（AI 生成）** 落地说明：三个新包的职责、速度/自转接口表、合成与安全优先级、启动方式、测试矩阵与实测结论 |
 | [`docs/仿真数据流(ai).md`](./docs/仿真数据流%28ai%29.md) | 仿真链路各模块算法与数据流详解（已按 SRM 链路更新） |
+| [`docs/仿真链迁移实车实施记录(ai).md`](./docs/仿真链迁移实车实施记录%28ai%29.md) | **（AI 生成）** 仿真链（fakeyaw + mux + 小陀螺 + ZLIO）迁移到实车的实施记录：改动清单、上电验收步骤、wz/云台接口缺口与回退 |
+| [`docs/minco实车迁移实施记录(ai).md`](./docs/minco实车迁移实施记录%28ai%29.md) | MINCO 控制器的实车迁移与分阶段验收（本迁移的控制器前置） |
 | [`docs/哨兵导航TF与下位机数据接口(ai).md`](./docs/哨兵导航TF与下位机数据接口%28ai%29.md) | MID-360 安装与底盘自旋的组合、传感器分工及上下位机通信约定 |
 | [`docs/局部规划器相关(ai).md`](./docs/局部规划器相关%28ai%29.md) | 当前控制器实现与候选方案对比 |
 | [`docs/局部规划器迁移MINCO_MPC方案(ai).md`](./docs/局部规划器迁移MINCO_MPC方案%28ai%29.md) | 局部规划器迁移 MINCO/MPC 的分阶段方案 |

@@ -78,6 +78,11 @@ FakeVelTransform::FakeVelTransform(const rclcpp::NodeOptions & options)
   this->declare_parameter<std::string>("input_cmd_vel_topic", "");
   this->declare_parameter<std::string>("output_cmd_vel_topic", "");
   this->declare_parameter<double>("odom_timeout", 0.25);
+  // 外推用的两路：底盘真正执行的指令话题 + 指令→执行的延迟（仿真秒，需标定）。
+  this->declare_parameter<std::string>("chassis_cmd_vel_topic", "cmd_vel_sim");
+  this->declare_parameter<double>("actuation_delay", 0.02);
+  this->declare_parameter<double>("wz_history_window", 1.0);
+  this->declare_parameter<std::string>("yaw_debug_topic", "yaw_debug");
   this->declare_parameter<double>("diagnostics_period", 0.5);
   this->declare_parameter<float>("init_spin_speed", 0.0);
 
@@ -91,6 +96,10 @@ FakeVelTransform::FakeVelTransform(const rclcpp::NodeOptions & options)
   this->get_parameter("input_cmd_vel_topic", input_cmd_vel_topic_);
   this->get_parameter("output_cmd_vel_topic", output_cmd_vel_topic_);
   this->get_parameter("odom_timeout", odom_timeout_);
+  this->get_parameter("chassis_cmd_vel_topic", chassis_cmd_vel_topic_);
+  this->get_parameter("actuation_delay", actuation_delay_);
+  this->get_parameter("wz_history_window", wz_history_window_);
+  this->get_parameter("yaw_debug_topic", yaw_debug_topic_);
   this->get_parameter("diagnostics_period", diagnostics_period_);
   this->get_parameter("init_spin_speed", spin_speed_);
 
@@ -112,6 +121,14 @@ FakeVelTransform::FakeVelTransform(const rclcpp::NodeOptions & options)
     RCLCPP_FATAL(get_logger(), "fake_vel_transform: diagnostics_period 必须为正数");
     throw std::invalid_argument("diagnostics_period must be positive");
   }
+  if (!std::isfinite(actuation_delay_) || actuation_delay_ < 0.0) {
+    RCLCPP_FATAL(get_logger(), "fake_vel_transform: actuation_delay 必须是非负有限值");
+    throw std::invalid_argument("actuation_delay must be finite and non-negative");
+  }
+  if (!(wz_history_window_ > 0.0) || !std::isfinite(wz_history_window_)) {
+    RCLCPP_FATAL(get_logger(), "fake_vel_transform: wz_history_window 必须为正数");
+    throw std::invalid_argument("wz_history_window must be positive");
+  }
 
   tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
 
@@ -123,6 +140,9 @@ FakeVelTransform::FakeVelTransform(const rclcpp::NodeOptions & options)
   cmd_vel_chassis_pub_ = this->create_publisher<geometry_msgs::msg::Twist>(output_cmd_vel_topic_, 1);
   diagnostics_pub_ = this->create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
     "diagnostics", rclcpp::QoS(10));
+  // 外推结果的高频出口：诊断是 0.5 s 一次，看不出自转锯齿，示波要的是每条指令一次。
+  yaw_debug_pub_ = this->create_publisher<geometry_msgs::msg::Vector3>(
+    yaw_debug_topic_, rclcpp::QoS(10));
 
   cmd_spin_sub_ = this->create_subscription<example_interfaces::msg::Float32>(
     cmd_spin_topic_, 1, std::bind(&FakeVelTransform::cmdSpinCallback, this, std::placeholders::_1));
@@ -141,6 +161,15 @@ FakeVelTransform::FakeVelTransform(const rclcpp::NodeOptions & options)
     odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
       odom_topic_, rclcpp::QoS(1).best_effort(),
       std::bind(&FakeVelTransform::odometryCallback, this, std::placeholders::_1));
+    // ★ 外推必须用**底盘真正执行**的 wz：mux 是最靠近底盘的一层，会做钳位(wz_max)、
+    //   切换输入源、超时清零。用本节点自己的输入（cmd_vel_nav_fake）会和外推目标不一致。
+    // 空字符串 = **关闭外推**（回到"直接用 odom yaw"的旧行为）。给实车留的开关：
+    // 串口链路的下发延迟还没标定时，宁可不动，也不要拿错的 d 去外推。
+    if (!chassis_cmd_vel_topic_.empty()) {
+      chassis_cmd_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
+        chassis_cmd_vel_topic_, rclcpp::QoS(100).reliable(),
+        std::bind(&FakeVelTransform::chassisCmdCallback, this, std::placeholders::_1));
+    }
   } else {
     odom_sub_filter_.subscribe(this, odom_topic_);
     odom_sub_filter_.registerCallback(
@@ -162,9 +191,14 @@ FakeVelTransform::FakeVelTransform(const rclcpp::NodeOptions & options)
     RCLCPP_INFO(
       get_logger(),
       "FakeVelTransform 已启动 (nav_se2): TF %s -> %s, odom=%s, 速度 [%s] -> [%s], "
-      "odom 超时 %.3f s, wz 逐条透传，无自转叠加。",
+      "odom 超时 %.3f s（墙钟）, wz 逐条透传，无自转叠加。\n"
+      "  yaw 外推: 指令源=%s, 生效延迟 d=%.3f s（仿真秒）, 积分窗口 %.2f s; "
+      "外推用节点时钟(use_sim_time=%s) + odom.stamp，不用墙钟。",
+      // 空话题 = 关闭外推
       robot_base_frame_.c_str(), fake_robot_base_frame_.c_str(), odom_topic_.c_str(),
-      input_cmd_vel_topic_.c_str(), output_cmd_vel_topic_.c_str(), odom_timeout_);
+      input_cmd_vel_topic_.c_str(), output_cmd_vel_topic_.c_str(), odom_timeout_,
+      chassis_cmd_vel_topic_.c_str(), actuation_delay_, wz_history_window_,
+      this->get_parameter("use_sim_time").as_bool() ? "true" : "false");
   } else {
     local_plan_sub_filter_.subscribe(this, local_plan_topic_);
     local_plan_sub_filter_.registerCallback(
@@ -230,8 +264,11 @@ void FakeVelTransform::odometryCallback(const nav_msgs::msg::Odometry::ConstShar
   double yaw = 0.0;
   {
     std::lock_guard<std::mutex> lock(state_mutex_);
-    last_odom_steady_ = steadyNow();
+    last_odom_steady_ = steadyNow();      // 只服务"超时判断"（墙钟）
     last_odom_age_ = 0.0;
+    // 外推一律用仿真时间轴：odom 消息自带 stamp（use_sim_time 下就是仿真时间）。
+    last_odom_stamp_ = rclcpp::Time(msg->header.stamp);
+    has_odom_stamp_ = true;
     if (usable) {
       yaw = tf2::getYaw(orientation);
       if (std::isfinite(yaw)) {
@@ -300,6 +337,84 @@ void FakeVelTransform::publishZeroVelocity()
   last_output_wz_ = 0.0;
 }
 
+void FakeVelTransform::chassisCmdCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
+{
+  const double wz = msg->angular.z;
+  if (!std::isfinite(wz)) {
+    return;
+  }
+  const rclcpp::Time now = this->now();     // 仿真时间（use_sim_time）
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  wz_history_.push_back({now, wz});
+  // 保留策略：至少要覆盖**当前外推区间**的左端（`last_odom_stamp_ - d`）。
+  // 只按 "now - window" 修剪的话，一旦 odom 停止刷新（左端冻结、now 继续前进），
+  // 窗口会把早先那段 wz 挤掉，积分反而**倒着走** —— 实测过一次，很反直觉。
+  rclcpp::Time oldest = now - rclcpp::Duration::from_seconds(wz_history_window_);
+  if (has_odom_stamp_) {
+    const rclcpp::Time need = last_odom_stamp_ - rclcpp::Duration::from_seconds(actuation_delay_);
+    if (need < oldest) {
+      oldest = need;
+    }
+  }
+  while (!wz_history_.empty() && wz_history_.front().stamp < oldest) {
+    wz_history_.pop_front();
+  }
+}
+
+double FakeVelTransform::integrateCommandWz(
+  const rclcpp::Time & from, const rclcpp::Time & to, bool & partial) const
+{
+  partial = false;
+  if (to <= from) {
+    return 0.0;
+  }
+  if (wz_history_.empty()) {
+    partial = true;
+    return 0.0;
+  }
+
+  // 指令是"分段常值"的：样本 i 的 wz 在 [stamp_i, stamp_{i+1}) 内有效。
+  // 缓存覆盖不到 from 时，从最早样本开始积分并标记 partial（宁可少算，不要瞎猜）。
+  rclcpp::Time cursor = from;
+  double wz = 0.0;
+  bool have_wz = false;
+  if (wz_history_.front().stamp <= from) {
+    for (const auto & sample : wz_history_) {
+      if (sample.stamp > from) {
+        break;
+      }
+      wz = sample.wz;
+      have_wz = true;
+    }
+  } else {
+    partial = true;
+    cursor = wz_history_.front().stamp;
+    wz = wz_history_.front().wz;
+    have_wz = true;
+  }
+  if (!have_wz) {
+    partial = true;
+    return 0.0;
+  }
+
+  double integral = 0.0;
+  for (const auto & sample : wz_history_) {
+    if (sample.stamp <= cursor) {
+      continue;
+    }
+    if (sample.stamp >= to) {
+      break;
+    }
+    integral += wz * (sample.stamp - cursor).seconds();
+    cursor = sample.stamp;
+    wz = sample.wz;
+  }
+  if (to > cursor) {
+    integral += wz * (to - cursor).seconds();
+  }
+  return integral;
+}
+
 void FakeVelTransform::publishTransformedVelocity(const geometry_msgs::msg::Twist & _cmd)
 {
   {
@@ -322,6 +437,8 @@ void FakeVelTransform::publishTransformedVelocity(const geometry_msgs::msg::Twis
   bool usable = false;
   {
     std::lock_guard<std::mutex> lock(state_mutex_);
+    // ⚠ 这里的 age 是**墙钟**，只用来判"里程计死没死"：仿真暂停时墙钟照样走，
+    //   仿真时间却停住，用仿真时间判超时会永远判不出来。
     const double age = steadyNow() - last_odom_steady_;
     last_odom_age_ = age;
     if (!has_yaw_) {
@@ -343,6 +460,50 @@ void FakeVelTransform::publishTransformedVelocity(const geometry_msgs::msg::Twis
       odom_topic_.c_str(), odom_timeout_);
     publishZeroVelocity();
     return;
+  }
+
+  // ---- 仿真时间积分外推（2026-11-06）----
+  //
+  //   yaw(now + d) = yaw_odom(stamp) + ∫[stamp−d → now] wz_cmd(s) ds
+  //
+  // d = actuation_delay_：底盘收到指令要过一小段才执行，所以这条 vx/vy 指令真正起作用是
+  // 在 now+d 时刻，需要那个时刻的航向来旋转。积分（而不是"当前 wz × 年龄"）的好处是
+  // 自转起停的加减速段（MINCO max_angular_accel）已经被如实包含在指令序列里。
+  //
+  // 两处必须用**仿真时间**：节点时钟 this->now()（use_sim_time）与 odom.header.stamp。
+  // 墙钟在这里会把 wz（弧度/仿真秒）乘错 1/RTF 倍 —— 实测 RTF≈0.77，即多转约 30%。
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    const rclcpp::Time now = this->now();
+    extrapolation_span_ = 0.0;
+    last_wz_integral_ = 0.0;
+    predicted_yaw_ = yaw;
+    if (has_odom_stamp_) {
+      const rclcpp::Time from =
+        last_odom_stamp_ - rclcpp::Duration::from_seconds(actuation_delay_);
+      if (now > from) {
+        bool partial = false;
+        const double integral = integrateCommandWz(from, now, partial);
+        predicted_yaw_ = yaw + integral;
+        extrapolation_span_ = (now - from).seconds();
+        last_wz_integral_ = integral;
+        extrapolation_count_++;
+        if (partial) {
+          extrapolation_partial_count_++;
+        }
+      }
+    }
+    yaw = predicted_yaw_;
+  }
+
+  // 示波用：x=预测 yaw, y=odom yaw, z=积分量（rad）
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    geometry_msgs::msg::Vector3 debug;
+    debug.x = predicted_yaw_;
+    debug.y = latest_yaw_;
+    debug.z = last_wz_integral_;
+    yaw_debug_pub_->publish(debug);
   }
 
   const PlanarVelocity v_fake{_cmd.linear.x, _cmd.linear.y, _cmd.angular.z};
@@ -477,7 +638,23 @@ void FakeVelTransform::publishDiagnostics()
   add("fake_robot_base_frame", fake_robot_base_frame_);
   add("yaw_deg", formatDouble(latest_yaw_ * RAD_TO_DEG));
   add("yaw_valid", yaw_ok ? "true" : "false");
+  // 外推诊断（2026-11-06）：转换实际用的是 predicted_yaw，与 yaw_deg（odom 原始）
+  // 的差就是外推量。示波工具把 predicted_yaw_deg 与同一仿真时刻的真值 yaw 画在一起。
+  add("predicted_yaw_deg", formatDouble(predicted_yaw_ * RAD_TO_DEG));
+  add("predicted_yaw", formatDouble(predicted_yaw_));
+  add("wz_integral_deg", formatDouble(last_wz_integral_ * RAD_TO_DEG));
+  add("extrapolation_span", formatDouble(extrapolation_span_));
+  add("actuation_delay", formatDouble(actuation_delay_));
+  add("wz_history_size", std::to_string(wz_history_.size()));
+  add("extrapolation_count", std::to_string(extrapolation_count_));
+  add("extrapolation_partial_count", std::to_string(extrapolation_partial_count_));
+  add("chassis_cmd_vel_topic", chassis_cmd_vel_topic_);
   add("odom_age", formatDouble(odom_age));
+  // odom 年龄的**仿真时间**版本（odom_age 是墙钟，两者之比就是 RTF）
+  add(
+    "odom_age_sim",
+    formatDouble(
+      has_odom_stamp_ ? (this->now() - last_odom_stamp_).seconds() : -1.0));
   add("odom_timeout", formatDouble(odom_timeout_));
   add("input_count", std::to_string(input_count_));
   add("output_count", std::to_string(output_count_));

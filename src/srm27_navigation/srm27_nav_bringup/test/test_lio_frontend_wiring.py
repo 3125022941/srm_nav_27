@@ -42,10 +42,27 @@ def _assert(condition, message):
         raise AssertionError(message)
 
 
-def _render(value):
-    """把 substitution / 字符串 / 列表统一渲染成字符串（只用于断言与报错信息）。"""
+def _render(value, context=None):
+    """把 substitution / 字符串 / 列表统一渲染成字符串（只用于断言与报错信息）。
+
+    给了 `context` 时**先尝试真正求值**（`LaunchConfiguration` 只有在上下文里才有值）：
+    ZLIO 的输入接线已经从"写死的字符串"改成 launch 参数了（仿真/实车不同），
+    断言必须看求值结果，而不是 substitution 的 repr。
+    """
+    if context is not None and not isinstance(value, (list, tuple)):
+        try:
+            from launch.utilities import (
+                normalize_to_list_of_substitutions,
+                perform_substitutions,
+            )
+
+            return perform_substitutions(
+                context, normalize_to_list_of_substitutions(value)
+            )
+        except Exception:  # noqa: BLE001 - 求值失败就退回下面的静态渲染
+            pass
     if isinstance(value, (list, tuple)):
-        return "".join(_render(item) for item in value)
+        return "".join(_render(item, context) for item in value)
     text = getattr(value, "text", None)
     if isinstance(text, str):
         return text
@@ -100,8 +117,8 @@ def _node_parameter(module, overrides, node_name, parameter):
                 continue
             # 注意：键也可能是 substitution，不能直接 `parameter in dict`
             for key, value in parameters.items():
-                if _render(key) == parameter:
-                    return _render(value).strip("'\"")
+                if _render(key, context) == parameter:
+                    return _render(value, context).strip("'\"")
     return None
 
 

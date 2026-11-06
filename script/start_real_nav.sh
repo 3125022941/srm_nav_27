@@ -16,28 +16,41 @@
 #   --static  只加载先验栅格图 + 静态 map->odom, 没有任何里程计来源
 #             (仅当车体模块自己发 odom->base_link 时可用; 直接用本脚本起车不会动)
 #
-# 实车速度链路 (两种控制器共用同一条出口, 区别只在是否串 fake_vel_transform):
-#   Omni (nav2_params_srm.yaml, 默认):
-#     controller_server ─cmd_vel_controller─► velocity_smoother ─cmd_vel_nav2_result─┐
-#                                                                                     v
-#                                          fake_vel_transform ─► cmd_vel_chassis ─► srm27_nav_protocol ─► 串口 ─► C 板
-#   MINCO (nav2_params_srm_minco.yaml, --controller minco):
-#     controller_server ─cmd_vel_controller─► velocity_smoother ─► cmd_vel_chassis ─► srm27_nav_protocol ─► 串口
+# 实车速度链路（2026-11-06 起与仿真同构；见 docs/仿真链迁移实车实施记录(ai).md）:
 #
-#   MINCO 模式**默认关闭 fake_vel_transform**, 与仿真入口 nav_srm_simulation_launch.py 一致:
-#     * SRM 的机器人参考系是真实随底盘运动的 base_link, 不需要 gimbal_yaw_fake 那套虚拟底盘;
-#     * fake_vel_transform 会把 (vx, vy) 再乘一次 R(-yaw) —— 它假设输入是"与 odom 对齐的
-#       虚拟底盘系", 而 Nav2 控制器 (含 MINCO) 输出的本来就是 base_link 系;
-#       只有 yaw ≡ 0 时这个多余旋转才是恒等变换, 一旦车头方向非零就会静默转错方向;
-#     * 它的同步分支依赖 local_plan 话题, 而该话题只有 Omni 控制器发布,
-#       MINCO 插件不发布 -> 永远走"控制器不活跃"分支, 行为不可预测。
-#   --controller omni 或显式 --fake-vel-transform 可以恢复旧链路。
+#   MINCO 迁移链（默认）:
+#     controller_server ─cmd_vel_controller─► velocity_smoother ─cmd_vel_nav_fake─►
+#       fake_vel_transform ─cmd_vel_nav_body─► srm_cmd_mux ─cmd_vel_chassis─►
+#         srm27_nav_protocol ─► 串口 ─► C 板
 #
-# 速度限幅 (控制器 / 平滑器 / 恢复行为) 的**唯一来源**:
+#   Omni 旧链（-c omni）:
+#     controller_server ─► velocity_smoother ─cmd_vel_nav2_result─►
+#       fake_vel_transform（legacy）─cmd_vel_chassis─► srm27_nav_protocol ─► 串口
+#
+# 迁移链的四个要点（与仿真的 `start_sim_nav.sh --chassis-spin` 完全一致）:
+#   1) 导航参考系 = base_link_fake（与 odom 平行、朝向稳定），代价地图/行为树也用它；
+#   2) MINCO 的 command_frame = base_link_fake：平移的 R(-yaw) **只**在 fake_vel_transform
+#      里做一次。旧实车链路关掉 fake 的理由（"重复旋转"、"依赖 local_plan 同步"）是针对
+#      legacy 模式 + command_frame=base_link 的，nav_se2 链上不成立；
+#   3) wz 由导航拥有（yaw_policy.mode=se2；`--yaw-mode spin` 改成小陀螺），
+#      mux 是 cmd_vel_chassis 的唯一发布者，并带 stop_all/resume_all 急停服务；
+#   4) 速度限幅仍只有一处：config/real/speed_limits.yaml（`@fakeyaw` 段负责放开 smoother
+#      的 yaw 界，`srm_cmd_mux` 段给 mux 的 wz_max —— 首跑 1.5 rad/s，验过再抬）。
+#
+# ⚠ 首跑必读（wz 与云台）
+#   * C 板固件现在**执行 wz**（用户确认，2026-11-06）。但"符号/增益/死区"只有转起来才知道：
+#     首次务必架起车辆（轮子离地）或留人守物理急停，用 `--chassis-spin 0.3` 这种小速度先看方向。
+#   * 云台自转（仿真里的 `--gimbal-spin`）**实车暂不支持**：实车云台由下位机驱动，而当前协议
+#     （上→下 12 字节 vx/vy/wz、下→上只有比赛状态）**不回传云台关节角**。雷达在云台上，
+#     没有关节角时 `base_link` yaw 会差一个云台角 → 导航看到的车"自己在转"。
+#     所以本脚本拒绝 `--gimbal-spin`，只保留"协议补齐回传后用 --gimbal-joint-topic 接进来"的接口。
+#
+# 速度限幅 (控制器 / 平滑器 / mux / 恢复行为) 的**唯一来源**:
 #   src/srm27_navigation/srm27_nav_bringup/config/real/speed_limits.yaml
-#   launch 启动时把它合并进 nav2_params_srm*.yaml (参数文件里不再写这些键;
-#   两处都写且值不同 -> 启动直接报错)。串口限幅仍在 srm27_nav_protocol 自己的
-#   config 里 (而且限幅作用在 linear_velocity_scale 缩放**之后**)。
+#   launch 启动时把它合并进 nav2_params_srm*.yaml 与 srm_chassis_control.yaml
+#   (参数文件里不再写这些键; 两处都写且值不同 -> 启动直接报错)。
+#   串口限幅仍在 srm27_nav_protocol 自己的 config 里 (而且限幅作用在 linear_velocity_scale
+#   缩放**之后**)。
 #   改档位只改那一份; 改完先跑自检看"卡住速度的是哪一层", 再按下面的预检清单复核:
 #     python3 src/srm27_navigation/srm27_nav_bringup/scripts/srm_speed_limits_check.py
 # 详见 docs/导航速度调试指南.md §1/§2。
@@ -53,12 +66,17 @@
 #   3) 底盘能动之后, 先在 RViz 用很小的目标点试一次, 确认车头方向/正负号都对。
 #
 # 用法:
-#   ./script/start_real_nav.sh                       # 默认 --reloc + MINCO 控制器, 启动全部
-#   ./script/start_real_nav.sh --controller minco    # MINCO + MPC 控制器 (默认关闭 fake_vel_transform)
+#   ./script/start_real_nav.sh                       # 默认 --reloc + MINCO 迁移链, 启动全部
+#   ./script/start_real_nav.sh --controller minco    # MINCO + MPC (默认, fakeyaw 迁移链)
+#   ./script/start_real_nav.sh --chassis-spin        # 小陀螺 2.0 rad/s (首跑建议给 0.3)
+#   ./script/start_real_nav.sh --chassis-spin --gimbal-spin   # 与仿真同一条命令（云台参数只告警）
+#   ./script/start_real_nav.sh --yaw-mode xy_only    # A/B 对照: 导航不控自转
+#   ./script/start_real_nav.sh --no-mux              # 不经 mux (出口 = cmd_vel_nav_body, 需自行重映射)
+#   ./script/start_real_nav.sh --lio-frontend zlio   # 定位前端换 ZLIO (实车参数在 config/real)
 #   ./script/start_real_nav.sh -m xjl0914            # 指定地图 (maps/ 下的名字)
 #   ./script/start_real_nav.sh --prior-pcd /abs/map.pcd      # 指定重定位先验点云
 #   ./script/start_real_nav.sh --no-reloc                    # 不用重定位: LIO + 静态 map->odom, 不需要先验 PCD
-#   ./script/start_real_nav.sh -c omni                       # 换回 Omni 控制器
+#   ./script/start_real_nav.sh -c omni                       # 换回 Omni 旧链 (fake_vel_transform legacy)
 #   ./script/start_real_nav.sh --slam                # 边建图边导航
 #   ./script/start_real_nav.sh --map-to-odom 0 0 0   # 指定起步位姿 (map 系, 弧度)
 #   ./script/start_real_nav.sh --no-rviz --no-joy    # 只起链路, 不开图形界面
@@ -66,44 +84,72 @@
 #   ./script/start_real_nav.sh -n                    # 只解析并打印将执行的命令, 不启动
 #   ./script/start_real_nav.sh --stop                # 先发零速, 再结束实车链路节点
 #
-# 参数:
+# 参数（参数面与 script/start_sim_nav.sh **对齐**：同名的参数两边同义、同一条命令两边都能跑）:
+#
+#   ── 与 start_sim_nav.sh 同名同义 ─────────────────────────────────────────────
 #   -m, --map <名字|绝对路径>   地图名(在 maps/ 下解析)或 YAML 绝对路径; 缺省自动选择
 #       --prior-pcd <名字|路径> 重定位先验点云, 默认与地图同名
+#   -p, --params <绝对路径>     Nav2 参数文件（实车默认 = 迁移链那份, 见 -c）
+#   -c, --controller <auto|minco>   控制器（实车另有 omni 可选, 见下）
+#       --minco                 等价于 --controller minco
+#       --gicp / --no-gicp      先验点云重定位（= --reloc）/ 关掉它（= --no-reloc, LIO+静态图）
+#       --lio / --no-lio        LIO 出里程计 + 静态 map->odom / 关掉 LIO（实车=--static）
+#       --lio-frontend <point_lio|zlio>   里程计前端（默认 point_lio）
+#       --init-pose "<x,y,z,roll,pitch,yaw>"   map->odom 初值（实车只取 x/y/yaw）
+#       --prior-pcd-manifest <路径>   仿真专用, 实车只提示忽略
+#       --yaw-mode <auto|se2|spin>    MINCO 航向策略（实车另有 xy_only 对照档）
+#       --chassis-spin [rad/s] / --no-chassis-spin   底盘小陀螺（默认 2.0 rad/s）
+#       --gimbal-spin [rad/s] / --no-gimbal-spin
+#                               **实车不执行**：云台由下位机驱动、上位机无指令通道;
+#                               参数被接受只为命令行一致（详见下方"云台"说明）。
+#       --rviz / --no-rviz, --rviz-config <路径>, --smoother / --no-smoother
+#       --gui / --no-gui, --run / --no-run, -w / --world <名字>
+#                               Gazebo 专用; 实车接受并忽略（会给一行提示）
+#       --verify-spin           仿真专用的自主验证; 实车接受但**拒绝执行**（会自主驱动车辆），
+#                               并打印人工分步验收清单
+#
+#   ── 实车专用 ───────────────────────────────────────────────────────────────
 #       --map-to-odom X Y YAW   静态 map->odom 初值 (m, m, rad), 即"车现在停的位置
 #                               在地图坐标系里的位姿"; 默认 0 0 0 (车在 map 原点)
-#   -p, --params <绝对路径>     Nav2 参数, 默认由控制器决定 (默认 minco ->
-#                              config/real/nav2_params_srm_minco.yaml)
-#   -c, --controller <auto|omni|minco>
-#                              局部控制器选择 (默认 minco):
-#                                minco = config/real/nav2_params_srm_minco.yaml (默认)
-#                                omni  = config/real/nav2_params_srm.yaml
+#       --slam / --reloc / --static   其余定位方式（与 --lio/--gicp 同一组互斥开关）
+#       --no-reloc              等价于 --lio
+#       --gimbal-joint-topic <话题>   云台关节角回传话题（中继成 /joint_states）
+#       --mux / --no-mux        是否串 srm_cmd_mux（默认串）
+#       --speed-limits <路径>   速度限幅覆盖层（默认 config/real/speed_limits.yaml）
+#       --lidar-xyz / --lidar-rpy / --lidar-config / --namespace
+#       --robot-state-pub / --no-robot-state-pub, --chassis / --no-chassis, --joy / --no-joy
+#       --fake-vel-transform / --no-fake-vel-transform, --composition / --no-composition
+#       --log-level <级别>, -n/--check, --list-maps, --stop
+#   -c, --controller <auto|omni|minco>   控制器（实车扩展）:
+#                                minco = config/real/nav2_params_srm_minco_fakeyaw.yaml
+#                                        (**迁移链**: base_link_fake + fakeyaw + mux)
+#                                omni  = config/real/nav2_params_srm.yaml (旧链, 无 mux)
 #                                auto  = 读参数文件里的 FollowPath.plugin 自动判断;
-#                                        **只给 -p 而没给 -c 时也走这条路**, 于是
-#                                        "-p 指到 Omni 文件"不会被默认值 minco 拦下。
-#                              选 minco 时自动: 关闭 fake_vel_transform (可用
-#                              --fake-vel-transform 显式恢复)、把导航出口对准 cmd_vel_chassis、
-#                              并做一轮 MINCO 专属预检 (插件是否可解析 / use_sim_time 一致 /
-#                              各层限速是否自洽 / 里程计频率与 state_timeout 是否匹配)。
+#                                        **只给 -p 而没给 -c 时也走这条路**。
+#                              选 minco 时自动走 nav_srm_real_launch.py（迁移链 + mux）、
+#                              把导航出口对准 cmd_vel_nav_fake，并跑一轮 MINCO 预检。
 #       --minco / --omni        等价于 --controller minco / --controller omni
+#       --yaw-mode <auto|se2|spin|xy_only>
+#                               MINCO 航向策略 (默认 auto=se2, 导航拥有 wz):
+#                                se2 / spin / xy_only 含义同上; 仿真只到 spin。
+#                               只给 --yaw-mode spin 车**还不会转**, 要转加 --chassis-spin。
+#       --chassis-spin [rad/s]  底盘小陀螺（默认 2.0, 负值反向）:
+#                               ⚠ 首跑请架起车辆或用 0.3 这种小转速先确认方向；
+#                               mux 的 wz_max 首跑限在 1.5 rad/s。
+#       --gimbal-joint-topic <话题>
+#                               云台关节角回传话题 (std_msgs/Float32 或 JointState)。给出时
+#                               起 gimbal_joint_state_relay 转成 /joint_states。协议补齐字段前
+#                               留空即可; 留空又让云台转 = base_link yaw 必错。
+#       --zlio-config <路径>     ZLIO 算法配置, 默认 config/real/zlio_mid360.yaml
+#                               (--lio-frontend zlio 与 --reloc/--slam 互斥)
+#       --mux / --no-mux         是否串 srm_cmd_mux (默认串)。关掉时导航出口变成
+#                               cmd_vel_nav_body, 而串口节点订阅 cmd_vel_chassis —— 车不会动。
 #       --slam / --reloc / --lio / --static   定位方式, 四者互斥 (默认 --reloc)
-#       --no-reloc              关掉重定位 = 等价于 --lio: Point-LIO 里程计 + 静态
-#                               map->odom, **不需要先验 PCD**。默认 --reloc 要求地图有
-#                               maps/pcd/<地图名>_mapframe.pcd, 没有就用这个 (或 --lio)。
-#                               与 --reloc 同时给时以命令行里靠后的那个为准。
+#       --no-reloc              等价于 --lio: LIO 里程计 + 静态 map->odom, 不需要先验 PCD。
 #       --lidar-xyz "X Y Z"     雷达在 base_link 下的安装位置 (默认 0.12081 -0.056721 0.346388)
 #       --lidar-rpy "R P Y"     雷达安装角, 弧度 (默认 0.523598776 0 1.099557429 = roll 30°/yaw 63°)
 #       --lidar-config <路径>   雷达驱动网络配置, 默认 config/real/mid360_user_config.json
-#       --namespace <ns>        命名空间 (默认空 = 根命名空间)
-#       --rviz / --no-rviz             是否启动 RViz (默认启动)
-#       --robot-state-pub / --no-robot-state-pub   是否启动车体 TF (默认启动)
-#       --chassis / --no-chassis       是否启动底盘串口 (默认启动)
-#       --joy / --no-joy               是否启动手柄遥控 (默认关闭)
-#       --smoother / --no-smoother     是否串联 velocity_smoother (默认串联)
-#       --fake-vel-transform / --no-fake-vel-transform
-#                              默认: Omni 启用、MINCO 关闭 (见上文速度链路)。
-#                              显式给出时以显式值为准。
-#       --composition / --no-composition   导航栈是否用组合节点 (默认组合)
-#       --log-level <级别>      导航栈日志级别 (默认 info)
+#       --namespace <ns>        命名空间 (默认空 = 根命名空间; 环境变量 ROBOT_NS 亦可)
 #   -n, --check                 只解析并打印将执行的命令 (等同 DRY_RUN=1)
 #       --list-maps             列出可选地图与先验 PCD
 #       --stop                  发零速后结束本链路进程 (不起新节点)
@@ -113,7 +159,9 @@
 #   MAP MAP_NAME PRIOR_PCD_FILE PARAMS_FILE CONTROLLER LIDAR_CONFIG_FILE NAMESPACE
 #   START_SLAM START_RELOC START_LIO START_STATIC NO_RELOC
 #   USE_RVIZ USE_ROBOT_STATE_PUB USE_CHASSIS USE_JOY USE_COMPOSITION
-#   USE_VELOCITY_SMOOTHER USE_FAKE_VEL_TRANSFORM
+#   USE_VELOCITY_SMOOTHER USE_FAKE_VEL_TRANSFORM USE_CHASSIS_MUX
+#   YAW_MODE CHASSIS_SPIN_WZ CHASSIS_SPIN_READY_TIMEOUT GIMBAL_JOINT_TOPIC
+#   LIO_FRONTEND ZLIO_CONFIG
 #   LIDAR_XYZ LIDAR_RPY MAP_TO_ODOM_X MAP_TO_ODOM_Y MAP_TO_ODOM_YAW LOG_LEVEL
 #   OPEN_MODE(tab|window) TERMINAL LOG_LEVEL DRY_RUN SRM27_WS_DIR PREKILL
 #
@@ -121,11 +169,13 @@
 #   - 启动前会自动先跑一遍 script/kill_gzb.sh 和 script/kill_rviz.sh, 清掉上次
 #     遗留的 Gazebo / RViz (不清会抢 /clock、抢 TF、抢 RViz 窗口)。清理失败只告警
 #     不阻断; 想完全跳过这一步用 PREKILL=0。
-#   - 本脚本走 nav2_stack_launch.py 而不是 nav_real_launch.py, 因为后者没有透传
-#     use_pcd_localization / use_lio_odometry (传了也无效), --reloc / --lio 会失效。
-#     nav2_stack_launch.py 本身与控制器无关 (只把 params_file 透传给各节点), 所以
-#     MINCO 不需要新增一个实车 launch: 换控制器就是换参数文件, 入口保持唯一的这一条。
-#     MINCO 实车首次上电的分阶段验收清单见 docs/minco实车迁移实施记录(ai).md。
+#   - MINCO（迁移链）走 launch/nav_srm_real_launch.py：它在 nav2_stack 之上多做了三件事
+#     —— 把 yaw_policy/判停器按 --yaw-mode 注入、起 srm_cmd_mux（出口 cmd_vel_chassis）、
+#     启动时核对整条速度链。Omni 旧链仍走 nav2_stack_launch.py。
+#     不使用 nav_real_launch.py：它没有透传 use_pcd_localization / use_lio_odometry /
+#     use_fake_vel_transform，--reloc / --lio / 迁移链都会失效。
+#     MINCO 实车首次上电的分阶段验收清单见 docs/minco实车迁移实施记录(ai).md，
+#     迁移链（小陀螺/云台缺口）见 docs/仿真链迁移实车实施记录(ai).md。
 #   - 雷达驱动单独启动: 驱动代码里的节点名是 livox_driver_node, 而参数文件顶层键是
 #     livox_ros_driver2, ROS 2 按节点名匹配 --params-file, 对不上整段参数被忽略,
 #     因此这里显式 -r __node:=livox_ros_driver2; 参数文件里的 user_config_path 用的是
@@ -189,9 +239,9 @@ USE_CHASSIS="${USE_CHASSIS:-1}"
 USE_JOY="${USE_JOY:-0}"
 USE_COMPOSITION="${USE_COMPOSITION:-1}"
 USE_VELOCITY_SMOOTHER="${USE_VELOCITY_SMOOTHER:-1}"
-# fake_vel_transform 的默认值取决于控制器: Omni 沿用旧链路 (启用), MINCO 关闭。
-# 这里先记住"环境变量有没有显式给过", 解析参数文件之后再定默认值 —— 与定位方式的
-# MODE_GIVEN 是同一个思路: 默认值不能覆盖用户的显式选择。
+# fake_vel_transform 的默认值取决于控制器: Omni 沿用旧链路 (启用 legacy), MINCO 迁移链
+# **必须**启用 nav_se2 (它就是链路的一部分)。这里先记住"环境变量有没有显式给过", 解析
+# 参数文件之后再定默认值 —— 与定位方式的 MODE_GIVEN 是同一个思路。
 if [ -n "${USE_FAKE_VEL_TRANSFORM:-}" ]; then
   USE_FAKE_VEL_TRANSFORM_GIVEN=1
 else
@@ -201,6 +251,47 @@ fi
 # 同上: 命令行是否显式给过 --fake-vel-transform / --no-fake-vel-transform。
 FAKE_VEL_CLI_GIVEN=0
 
+# 速度出口 mux (srm_cmd_mux): MINCO 迁移链默认串联, 它是 cmd_vel_chassis 的唯一发布者。
+USE_CHASSIS_MUX="${USE_CHASSIS_MUX:-1}"
+MUX_CLI_GIVEN=0
+
+# MINCO 航向策略: auto=按链路推导 (迁移链 se2); spin=小陀螺; xy_only=导航不控自转。
+YAW_MODE="${YAW_MODE:-auto}"
+YAW_MODE_CLI_GIVEN=0
+# 底盘小陀螺角速度 (rad/s): 留空 = 不自转; --chassis-spin 不带数值时用 2.0。
+CHASSIS_SPIN_WZ="${CHASSIS_SPIN_WZ:-}"
+CHASSIS_SPIN_DEFAULT="2.0"
+CHASSIS_SPIN_CLI_GIVEN=0
+if [ -n "${CHASSIS_SPIN_WZ}" ]; then CHASSIS_SPIN_CLI_GIVEN=1; fi
+# Nav2 就绪后再下发自转请求, 等多久 (秒)。
+CHASSIS_SPIN_READY_TIMEOUT="${CHASSIS_SPIN_READY_TIMEOUT:-120}"
+
+# 云台自转: 与 start_sim_nav.sh 同名同义（便于同一条命令两边用）。
+# ⚠ 实车**不执行**这个参数：云台由下位机驱动，上位机没有指令通道（见文件头）。
+# 保留它是为了参数面一致；真正影响 TF 的是 --gimbal-joint-topic。
+GIMBAL_SPIN_WZ="${GIMBAL_SPIN_WZ:-}"
+GIMBAL_SPIN_DEFAULT="-1.0"
+GIMBAL_SPIN_CLI_GIVEN="${GIMBAL_SPIN_CLI_GIVEN:-0}"
+if [ -n "$GIMBAL_SPIN_WZ" ]; then GIMBAL_SPIN_CLI_GIVEN=1; fi
+
+# 一步验证（仿真专用）：实车会自主驱动车辆，因此只接受参数、不执行（给出人工步骤）。
+VERIFY_SPIN="${VERIFY_SPIN:-0}"
+
+# 先验点云清单（仿真用它推导 map->odom 初值；实车没有"出生点"概念，只提示忽略）。
+PRIOR_PCD_MANIFEST="${PRIOR_PCD_MANIFEST:-}"
+# --world 是仿真世界名；实车只接受并提示忽略（地图仍用 -m）。
+WORLD_ARG="${WORLD:-}"
+# 自定义 RViz 配置（与 start_sim_nav.sh 同名）。
+RVIZ_CONFIG="${RVIZ_CONFIG:-}"
+
+# 云台关节角回传话题 (空 = 不起中继/不假设云台在转)。实车协议还没这个字段。
+GIMBAL_JOINT_TOPIC="${GIMBAL_JOINT_TOPIC:-}"
+
+# 里程计前端 (point_lio / zlio) 与 ZLIO 算法配置。
+LIO_FRONTEND="${LIO_FRONTEND:-point_lio}"
+LIO_FRONTEND_CLI_GIVEN=0
+ZLIO_CONFIG="${ZLIO_CONFIG:-}"
+
 # 局部控制器: auto (按参数文件内容判断) / omni / minco。
 CONTROLLER="${CONTROLLER:-minco}"
 CONTROLLER_CLI_GIVEN=0
@@ -209,9 +300,38 @@ START_SLAM="${START_SLAM:-0}"
 START_RELOC="${START_RELOC:-0}"
 START_LIO="${START_LIO:-0}"
 START_STATIC="${START_STATIC:-0}"
+
+# ---- 与 start_sim_nav.sh 共用的环境变量别名 ----
+# 仿真脚本用 USE_GICP / USE_LIO_ODOMETRY / ROBOT_NS / INIT_POSE 这些名字。
+# 这里做**别名**而不是改名：两侧脚本"同一条命令、同一批环境变量"都能跑。
+# 注意这段在 is_true() 定义之前，所以只用 case 判断（不调函数）。
+_alias_true() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on) return 0 ;;
+    *)             return 1 ;;
+  esac
+}
+if _alias_true "${USE_GICP:-0}"; then
+  START_RELOC=1
+fi
+if _alias_true "${USE_LIO_ODOMETRY:-0}"; then
+  START_LIO=1
+fi
+if [ -z "${NAMESPACE:-}" ] && [ -n "${ROBOT_NS:-}" ]; then
+  NAMESPACE="$ROBOT_NS"
+fi
+if [ -n "${INIT_POSE:-}" ]; then
+  FIRST_INIT_POSE="$INIT_POSE"     # 解析阶段统一处理（--init-pose 也写这里）
+else
+  FIRST_INIT_POSE=""
+fi
+unset -f _alias_true
+
 # --no-reloc: 显式不用重定位 (此时不需要先验 PCD), 退回 LIO 里程计 + 静态 map->odom。
 # 单独一个变量是为了区分"没提过重定位"和"明确关掉重定位"——后者要压过默认值 --reloc。
 NO_RELOC="${NO_RELOC:-0}"
+# --no-lio（与 sim 同名）：实车没有真值里程计，"关闭 LIO"等于没有里程计来源。
+LIO_DISABLED="${LIO_DISABLED:-0}"
 # 命令行是否显式给过定位方式。没给才在解析之后套用默认 --reloc
 # (默认值不能在这里就写进 START_LIO, 否则 --slam 会叠成"两个模式同时开")。
 MODE_GIVEN=0
@@ -222,6 +342,8 @@ PARAMS_FILE="${PARAMS_FILE:-}"
 # 参数文件是用户给的还是本脚本的默认值: -c 只在自己选默认文件时才去覆盖它。
 if [ -n "$PARAMS_FILE" ]; then PARAMS_FILE_GIVEN=1; else PARAMS_FILE_GIVEN=0; fi
 LIDAR_CONFIG_FILE="${LIDAR_CONFIG_FILE:-}"
+# 速度限幅覆盖层（控制器/平滑器/mux/恢复行为的唯一来源）。
+SPEED_LIMITS_FILE="${SPEED_LIMITS_FILE:-}"
 MAP_YAML=""
 PRIOR_PCD=""
 
@@ -239,7 +361,8 @@ MAP_TO_ODOM_YAW="${MAP_TO_ODOM_YAW:-0.0}"
 ROBOT_STATE_PUB_PATTERN='[r]eal_robot_state_publisher_launch\.py'
 LIVOX_PATTERN='[l]ivox_ros_driver2'
 CHASSIS_PATTERN='[s]rm27_nav_protocol'
-NAV_PATTERN='[n]av2_stack_launch\.py'
+# 导航入口：迁移链走 nav_srm_real_launch.py，旧链走 nav2_stack_launch.py。
+NAV_PATTERN='[n]av_(srm_real|2_stack)_launch\.py'
 RVIZ_PATTERN='[r]viz_launch\.py'
 JOY_PATTERN='[j]oy_teleop_launch\.py'
 
@@ -380,6 +503,11 @@ stop_real_nav() {
     '[t]errain_analysis'
     '[l]ifecycle_manager'
     '[f]ake_vel_transform'
+    '[c]md_mux'
+    '[z]lio_node'
+    '[z]lio_bridge'
+    '[i]mu_saturation_guard'
+    '[g]imbal_joint_state_relay'
     '[c]ontroller_server'
     '[p]lanner_server'
     '[b]t_navigator'
@@ -408,6 +536,42 @@ stop_real_nav() {
 }
 
 # ---------- 命令行参数 ----------
+# --init-pose "<x,y,z,roll,pitch,yaw>"（与 start_sim_nav.sh 同名）：只取 x/y/yaw，
+# 写进静态 map->odom。z/roll/pitch 在实车是二维静态 TF，会被忽略（并告警）。
+# 返回非 0 表示格式不对。
+parse_init_pose() {
+  printf '%s' "$1" | tr ',' ' ' | awk '
+    NF != 6 { exit 1 }
+    { printf "%.6f %.6f %.6f", $1, $2, $6 }'
+}
+
+apply_init_pose() {
+  local parsed
+  if ! parsed="$(parse_init_pose "$1")"; then
+    echo "[错误] --init-pose 需要 6 个数 x,y,z,roll,pitch,yaw: $1" >&2
+    exit 2
+  fi
+  # shellcheck disable=SC2086
+  set -- $parsed
+  MAP_TO_ODOM_X="$1"; MAP_TO_ODOM_Y="$2"; MAP_TO_ODOM_YAW="$3"
+  echo "[提示] --init-pose 已转成 map->odom: x=$1 y=$2 yaw=$3" \
+       "（z/roll/pitch 在实车是二维静态 TF，已忽略）"
+}
+
+# 环境变量 INIT_POSE（仿真脚本用的名字）在命令行之前生效，CLI 可覆盖。
+if [ -n "${FIRST_INIT_POSE:-}" ]; then
+  apply_init_pose "$FIRST_INIT_POSE"
+fi
+
+# --chassis-spin 是可带数值的开关: 下一个参数是数字就当转速, 否则用默认值
+# (这样 `--chassis-spin --no-rviz` 不会被误吞成转速)。与 start_sim_nav.sh 同一套实现。
+is_spin_rate() {
+  case "${1:-}" in
+    ''|*[!0-9.eE+-]*) return 1 ;;
+  esac
+  awk -v v="$1" 'BEGIN{ exit !(v == v + 0) }'
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     -m|--map)         MAP_NAME="${2:?--map 需要地图名或绝对路径}"; shift 2 ;;
@@ -445,6 +609,44 @@ while [ $# -gt 0 ]; do
     --no-smoother)    USE_VELOCITY_SMOOTHER=0; shift ;;
     --fake-vel-transform)    USE_FAKE_VEL_TRANSFORM=1; FAKE_VEL_CLI_GIVEN=1; shift ;;
     --no-fake-vel-transform) USE_FAKE_VEL_TRANSFORM=0; FAKE_VEL_CLI_GIVEN=1; shift ;;
+    --mux)            USE_CHASSIS_MUX=1; MUX_CLI_GIVEN=1; shift ;;
+    --no-mux)         USE_CHASSIS_MUX=0; MUX_CLI_GIVEN=1; shift ;;
+    --yaw-mode)       YAW_MODE="${2:?--yaw-mode 需要 auto|se2|spin|xy_only}"
+                      YAW_MODE_CLI_GIVEN=1; shift 2 ;;
+    # --chassis-spin 是可带数值的开关: 下一个参数是数字就当转速, 否则用默认 2.0。
+    --chassis-spin)
+                      CHASSIS_SPIN_CLI_GIVEN=1
+                      if [ $# -ge 2 ] && is_spin_rate "$2"; then
+                        CHASSIS_SPIN_WZ="$2"; shift 2
+                      else
+                        CHASSIS_SPIN_WZ="$CHASSIS_SPIN_DEFAULT"; shift
+                      fi ;;
+    --no-chassis-spin) CHASSIS_SPIN_WZ="0"; CHASSIS_SPIN_CLI_GIVEN=1; shift ;;
+    # 与 start_sim_nav.sh 同名同义（可带数值）。⚠ 实车不执行，见文件头与下方提示。
+    --gimbal-spin)
+                      GIMBAL_SPIN_CLI_GIVEN=1
+                      if [ $# -ge 2 ] && is_spin_rate "$2"; then
+                        GIMBAL_SPIN_WZ="$2"; shift 2
+                      else
+                        GIMBAL_SPIN_WZ="$GIMBAL_SPIN_DEFAULT"; shift
+                      fi ;;
+    --no-gimbal-spin) GIMBAL_SPIN_WZ="0"; GIMBAL_SPIN_CLI_GIVEN=1; shift ;;
+    --gimbal-joint-topic) GIMBAL_JOINT_TOPIC="${2:?--gimbal-joint-topic 需要话题}"; shift 2 ;;
+    --lio-frontend)   LIO_FRONTEND="${2:?--lio-frontend 需要 point_lio|zlio}"
+                      LIO_FRONTEND_CLI_GIVEN=1; shift 2 ;;
+    # --- 与 start_sim_nav.sh 对齐的参数面（同一条命令两边通用）---
+    -w|--world)       WORLD_ARG="${2:?--world 需要一个世界名}"; shift 2 ;;   # 实车忽略
+    --gicp)           START_RELOC=1; NO_RELOC=0; MODE_GIVEN=1; shift ;;     # = --reloc
+    --no-gicp)        START_RELOC=0; NO_RELOC=1; MODE_GIVEN=1; shift ;;     # = --no-reloc(LIO)
+    --no-lio)         LIO_DISABLED=1; MODE_GIVEN=1; shift ;;                # 无里程计来源=--static
+    --init-pose)      apply_init_pose "${2:?--init-pose 需要 x,y,z,roll,pitch,yaw}"; shift 2 ;;
+    --prior-pcd-manifest) PRIOR_PCD_MANIFEST="${2:?--prior-pcd-manifest 需要绝对路径}"; shift 2 ;;
+    --rviz-config)    RVIZ_CONFIG="${2:?--rviz-config 需要 .rviz 文件绝对路径}"; shift 2 ;;
+    --gui|--no-gui)   shift ;;                                              # Gazebo 专用，忽略
+    --run|--no-run)   shift ;;                                              # Gazebo 专用，忽略
+    --verify-spin)    VERIFY_SPIN=1; shift ;;
+    --zlio-config)    ZLIO_CONFIG="${2:?--zlio-config 需要路径}"; shift 2 ;;
+    --speed-limits)   SPEED_LIMITS_FILE="${2:?--speed-limits 需要路径}"; shift 2 ;;
     --composition)    USE_COMPOSITION=1; shift ;;
     --no-composition) USE_COMPOSITION=0; shift ;;
     --log-level)      LOG_LEVEL="${2:?--log-level 需要级别}"; shift 2 ;;
@@ -455,6 +657,101 @@ while [ $# -gt 0 ]; do
     *) echo "[错误] 未知参数: $1 (用 -h 查看用法)" >&2; exit 2 ;;
   esac
 done
+
+# ---------- 航向策略 / 小陀螺 ----------
+case "$YAW_MODE" in
+  auto|se2|spin|xy_only) ;;
+  *) echo "[错误] --yaw-mode 只支持 auto / se2 / spin / xy_only, 收到: $YAW_MODE" >&2; exit 2 ;;
+esac
+
+# 没给 --chassis-spin 就是不自转（默认行为）。
+if [ "$CHASSIS_SPIN_CLI_GIVEN" = "1" ] && [ -z "$CHASSIS_SPIN_WZ" ]; then
+  CHASSIS_SPIN_WZ="$CHASSIS_SPIN_DEFAULT"
+fi
+CHASSIS_SPIN_WZ="${CHASSIS_SPIN_WZ:-0}"
+case "$CHASSIS_SPIN_WZ" in
+  ''|*[!0-9.eE+-]*) echo "[错误] 底盘自转速度必须是数字 (rad/s): $CHASSIS_SPIN_WZ" >&2; exit 2 ;;
+esac
+if ! awk -v v="$CHASSIS_SPIN_WZ" 'BEGIN{ exit !(v == v + 0) }'; then
+  echo "[错误] 底盘自转速度必须是数字 (rad/s): $CHASSIS_SPIN_WZ" >&2; exit 2
+fi
+# 底盘自转必须让 MINCO 进入 spin 航向策略，否则请求会被航向策略忽略（车不转）。
+if ! awk -v v="$CHASSIS_SPIN_WZ" 'BEGIN{ exit (v == 0) ? 0 : 1 }'; then
+  if [ "$YAW_MODE_CLI_GIVEN" = "1" ] && [ "$YAW_MODE" != "spin" ]; then
+    echo "[错误] --chassis-spin 与 --yaw-mode ${YAW_MODE} 矛盾：" >&2
+    echo "       底盘自转请求只有在 yaw_mode=spin 时才会被 MINCO 消费。" >&2
+    echo "       去掉 --yaw-mode，或改成 --yaw-mode spin（只加 --chassis-spin 会自动切）。" >&2
+    exit 2
+  fi
+  YAW_MODE="spin"
+fi
+if awk -v v="$CHASSIS_SPIN_WZ" 'BEGIN{ a=(v<0)?-v:v; exit !(a > 0) }'; then
+  echo "[提示] 底盘自转 ${CHASSIS_SPIN_WZ} rad/s 已请求：首跑请架起车辆或守物理急停，先确认方向与增益。"
+  echo "[提示] 实际 wz 还受两层钳位：velocity_smoother 的 yaw 界与 srm_cmd_mux.wz_max"
+  echo "[提示] （config/real/speed_limits.yaml，首跑都是 1.5 rad/s）。"
+fi
+
+# ---------- --no-lio（与 sim 同名）----------
+# 仿真里 --no-lio 的意思是"不用 LIO 出里程计"，那时还有 Gazebo 真值兜底。
+# 实车没有真值：关掉 LIO 就真的没有 odometry 来源了，等价于 --static（车不会动）。
+if [ "$LIO_DISABLED" = "1" ]; then
+  if [ "$START_RELOC" = "1" ] || [ "$START_SLAM" = "1" ]; then
+    echo "[提示] --no-lio + 重定位/建图: 里程计仍由 LIO 提供（small_gicp / slam_toolbox 只发布 map->odom），"
+    echo "       实车上没有「不用 LIO 的里程计」，参数按给定模式继续。"
+  else
+    START_STATIC=1
+    cat >&2 <<'EOF'
+[警告] --no-lio: 实车没有仿真真值里程计，关掉 LIO 就没有任何 odom->base_link 来源。
+[警告]        已按 --static 处理（只加载栅格图 + 静态 map->odom），除非车体模块自己发里程计，
+[警告]        否则导航起不来、车不会动。仿真脚本里这个组合靠 Gazebo 真值兜底，实车没有那层。
+EOF
+  fi
+fi
+
+# ---------- 与 start_sim_nav.sh 对齐的参数：实车侧的语义说明 ----------
+# 云台自转：仿真里由 Gazebo 插件直接施加；实车由下位机驱动，上位机没有指令通道。
+# 为了"同一条命令两边都能跑"，这里接受参数但**不产生任何指令**，并明确告警。
+if [ "$GIMBAL_SPIN_CLI_GIVEN" = "1" ]; then
+  case "$GIMBAL_SPIN_WZ" in
+    ''|*[!0-9.eE+-]*) echo "[错误] 云台自转速度必须是数字 (rad/s): $GIMBAL_SPIN_WZ" >&2; exit 2 ;;
+  esac
+  if ! awk -v v="$GIMBAL_SPIN_WZ" 'BEGIN{ exit !(v == v + 0) }'; then
+    echo "[错误] 云台自转速度必须是数字 (rad/s): $GIMBAL_SPIN_WZ" >&2; exit 2
+  fi
+  cat >&2 <<EOF
+[警告] 实车不执行 --gimbal-spin ${GIMBAL_SPIN_WZ} rad/s：云台由下位机驱动，上位机没有指令通道
+[警告]   （协议上→下只有 vx/vy/wz 12 字节，下→上只有比赛状态，没有云台转速/关节角字段）。
+[警告]   参数被接受只是为了与 ./script/start_sim_nav.sh 保持同一套命令行。
+[提示] 真正要处理的是"云台在转、上位机不知道角度"：
+[提示]   · 云台保持固定 → 什么都不用做（默认）；
+[提示]   · 下位机自己转云台且能回传关节角 → 加 --gimbal-joint-topic <话题>；
+[提示]     中继节点会把它转成 /joint_states，robot_state_publisher 用 revolute 关节接进 TF。
+[提示]   · 否则 base_link yaw 会差一个云台角，导航"看到车自己在转"且不报错。
+EOF
+fi
+
+# 一步验证：仿真里它会自主下发目标/自转并断言；实车上那是"车自己动"，不能默默执行。
+if [ "$VERIFY_SPIN" = "1" ]; then
+  cat >&2 <<'EOF'
+[错误] 实车不支持 --verify-spin：它会自动下发自转请求与导航目标、让车自己动起来，
+[错误]   而实车没有"无头沙箱"这层保护（仿真里它还会顺手清掉 Gazebo/Nav2）。
+[提示] 参数被接受只是为了命令行一致；实车请按文档人工分步验收：
+[提示]   ./script/start_real_nav.sh --yaw-mode xy_only                     # S1 平移链路
+[提示]   ./script/start_real_nav.sh --yaw-mode spin --chassis-spin 0.3     # S2 方向/增益（架车）
+[提示]   ./script/start_real_nav.sh                                       # S3 SE(2) 闭环
+[提示]   ./script/start_real_nav.sh --chassis-spin 1.0                    # S4 小陀螺导航
+[提示]   完整清单见 docs/仿真链迁移实车实施记录(ai).md §6。
+EOF
+  exit 2
+fi
+
+if [ -n "$WORLD_ARG" ]; then
+  echo "[提示] --world $WORLD_ARG 是仿真专用参数，实车忽略；地图仍用 -m <名字> 指定。" >&2
+fi
+if [ -n "$PRIOR_PCD_MANIFEST" ]; then
+  echo "[提示] --prior-pcd-manifest 是仿真专用参数（用建图出生点推导 map->odom 初值）。" >&2
+  echo "[提示]   实车的起步位置每场不同，请用 --map-to-odom X Y YAW 或 --init-pose 指定。" >&2
+fi
 
 # ---------- 定位方式互斥 ----------
 to01() { if is_true "$1"; then printf '1'; else printf '0'; fi; }
@@ -524,9 +821,15 @@ esac
 # 迁移 MINCO 时最容易出错的不是算法, 而是"以为加载了 MINCO 其实还是 Omni":
 # 控制器和参数文件必须一致 (靠 FollowPath.plugin 区分), 所以顺序是
 # 控制器 -> 参数文件 -> 一致性核对, 而不是先定文件再猜控制器。
-MINCO_PARAMS_DEFAULT="$PKG_DIR/config/real/nav2_params_srm_minco.yaml"
+# MINCO 有两份：迁移链（fakeyaw + base_link_fake，默认）与"不串 fake"的旧版。
+# 默认选迁移链那份 —— 2026-11-06 起实车与仿真 `start_sim_nav.sh` 同构。
+MINCO_PARAMS_DEFAULT="$PKG_DIR/config/real/nav2_params_srm_minco_fakeyaw.yaml"
 if [ ! -f "$MINCO_PARAMS_DEFAULT" ]; then
-  MINCO_PARAMS_DEFAULT="$PKG_SRC/config/real/nav2_params_srm_minco.yaml"
+  MINCO_PARAMS_DEFAULT="$PKG_SRC/config/real/nav2_params_srm_minco_fakeyaw.yaml"
+fi
+MINCO_PARAMS_NOFAKE="$PKG_DIR/config/real/nav2_params_srm_minco.yaml"
+if [ ! -f "$MINCO_PARAMS_NOFAKE" ]; then
+  MINCO_PARAMS_NOFAKE="$PKG_SRC/config/real/nav2_params_srm_minco.yaml"
 fi
 OMNI_PARAMS_DEFAULT="$PKG_DIR/config/real/nav2_params_srm.yaml"
 if [ ! -f "$OMNI_PARAMS_DEFAULT" ]; then
@@ -566,6 +869,17 @@ if [ -z "$LIDAR_CONFIG_FILE" ]; then
     LIDAR_CONFIG_FILE="$PKG_SRC/config/real/mid360_user_config.json"
   fi
 fi
+if [ -z "$SPEED_LIMITS_FILE" ]; then
+  SPEED_LIMITS_FILE="$PKG_DIR/config/real/speed_limits.yaml"
+  if [ ! -f "$SPEED_LIMITS_FILE" ]; then
+    SPEED_LIMITS_FILE="$PKG_SRC/config/real/speed_limits.yaml"
+  fi
+fi
+if [ ! -f "$SPEED_LIMITS_FILE" ]; then
+  echo "[错误] 速度限幅覆盖层不存在: $SPEED_LIMITS_FILE" >&2
+  echo "[提示] 用 --speed-limits <绝对路径> 指定，或不用空串关闭合并（不推荐）。" >&2
+  exit 1
+fi
 
 # ---------- 局部控制器: 速度链路与默认值 ----------
 # (MINCO/OMNI 默认文件与控制器校验已在前面完成, 这里只处理从控制器派生出来的默认值。)
@@ -593,32 +907,95 @@ if [ "$CONTROLLER" = "minco" ] && [ -f "$PARAMS_FILE" ] \
   exit 1
 fi
 
-# fake_vel_transform 默认值跟着控制器走 (MINCO 关闭, Omni 启用), 显式指定优先。
+# fake_vel_transform 默认值跟着控制器走: MINCO 迁移链**必须启用**（它是链路的一部分）,
+# Omni 旧链沿用"启用 legacy 模式"; 显式指定优先。
 if [ "$CONTROLLER" = "minco" ]; then
   if [ "$FAKE_VEL_CLI_GIVEN" = "0" ] && [ "$USE_FAKE_VEL_TRANSFORM_GIVEN" = "0" ]; then
-    USE_FAKE_VEL_TRANSFORM=0
-    echo "[提示] MINCO 模式: 默认关闭 fake_vel_transform (与仿真入口 nav_srm_simulation_launch.py 一致)。"
-    echo "[提示] 如需恢复旧链路, 显式加 --fake-vel-transform。"
-  elif [ "$USE_FAKE_VEL_TRANSFORM" = "1" ]; then
+    USE_FAKE_VEL_TRANSFORM=1
+    echo "[提示] MINCO 迁移链: fake_vel_transform 默认启用 (nav_se2, 与仿真 start_sim_nav.sh 一致)。"
+  elif [ "$USE_FAKE_VEL_TRANSFORM" = "0" ]; then
     cat >&2 <<'EOF'
-[警告] MINCO 与 fake_vel_transform 同时启用, 这一组合有两个已知问题:
-[警告]   1) fake_vel_transform 会对 (vx, vy) 再做一次 R(-yaw) 旋转 —— 它假设输入是
-[警告]      "与 odom 对齐的虚拟底盘系", 而 MINCO 输出的本来就是 base_link 系。
-[警告]      只有底盘 yaw ≡ 0 时该旋转才是恒等变换; 一旦车头方向非零, 平移方向会被静默转错。
-[警告]   2) 它的同步分支依赖 local_plan 话题, 而该话题只有 Omni 控制器发布;
-[警告]      MINCO 插件不发布 -> 永远走"控制器不活跃"的直发分支, 行为与设计意图不一致。
-[警告] 实车 MINCO 建议 --no-fake-vel-transform; 确需保留请自行确认上面两点可接受。
+[错误] MINCO 迁移链必须启用 fake_vel_transform：
+[错误]   参数文件把命令系设成了 base_link_fake（导航参考系不随底盘自转），
+[错误]   平移速度的 R(-yaw) 必须由 fake_vel_transform 做那一次；
+[错误]   关掉它 = 导航输出永远在"假车头方向"的系里，车会往错方向走且不报错。
+[提示] 确实想用"导航不控自转、命令系 base_link"的旧链，请显式指定参数文件：
+[提示]   ./script/start_real_nav.sh -p <绝对路径>/config/real/nav2_params_srm_minco.yaml
+[提示]   （或用 -c omni 回到 Omni 旧链。）
 EOF
+    exit 1
   fi
 fi
 
 FAKE_ARG="$(bool_arg "$USE_FAKE_VEL_TRANSFORM")"
 
-# 导航链路的最终出口必须落在底盘节点订阅的 cmd_vel_chassis 上。
-if [ "$USE_FAKE_VEL_TRANSFORM" = "1" ]; then
-  CMD_VEL_NAV_TOPIC="cmd_vel_nav2_result"    # 由 fake_vel_transform 转成 cmd_vel_chassis
+# 迁移链要求参数文件是 base_link_fake 变体（否则 fakeyaw 链本身就是错的）。
+MINCO_FAKEYAW_CHAIN=0
+if [ "$CONTROLLER" = "minco" ] && [ "$USE_FAKE_VEL_TRANSFORM" = "1" ] \
+   && grep -q "base_link_fake" "$PARAMS_FILE" 2>/dev/null; then
+  MINCO_FAKEYAW_CHAIN=1
+fi
+
+# 速度出口：迁移链的出口话题是 fake_vel_transform 的输入 cmd_vel_nav_fake；
+# Omni 旧链保持原样（fake -> cmd_vel_nav2_result，无 fake -> 直接 cmd_vel_chassis）。
+if [ "$MINCO_FAKEYAW_CHAIN" = "1" ]; then
+  CMD_VEL_NAV_TOPIC="cmd_vel_nav_fake"
+elif [ "$USE_FAKE_VEL_TRANSFORM" = "1" ]; then
+  CMD_VEL_NAV_TOPIC="cmd_vel_nav2_result"
 else
-  CMD_VEL_NAV_TOPIC="cmd_vel_chassis"        # 直接对准底盘
+  CMD_VEL_NAV_TOPIC="cmd_vel_chassis"
+fi
+
+# 迁移链必须串 mux：cmd_vel_chassis 的唯一发布者是 srm_cmd_mux。
+if [ "$MINCO_FAKEYAW_CHAIN" = "1" ] && [ "$USE_CHASSIS_MUX" = "0" ]; then
+  echo "[警告] --no-mux: 导航出口是 cmd_vel_nav_body，而串口节点订阅 cmd_vel_chassis；" >&2
+  echo "[警告]           不做额外重映射时车不会动。仅用于排查链路。" >&2
+fi
+if [ "$MINCO_FAKEYAW_CHAIN" = "0" ] && [ "$USE_CHASSIS_MUX" = "1" ] \
+   && [ "$CONTROLLER" = "omni" ]; then
+  # Omni 旧链不进 mux（navigation_launch 的出口就是 fake 的输入）。显式 --mux 会被忽略。
+  if [ "$MUX_CLI_GIVEN" = "1" ]; then
+    echo "[警告] Omni 旧链不支持 mux（旧链出口 cmd_vel_nav2_result），已忽略 --mux。" >&2
+  fi
+  USE_CHASSIS_MUX=0
+fi
+
+# 航向策略只在迁移链上有意义；旧链强制 xy_only（导航不控自转）。
+if [ "$MINCO_FAKEYAW_CHAIN" = "0" ] && [ "$CONTROLLER" = "minco" ]; then
+  echo "[提示] 参数文件不是 base_link_fake 变体：按旧链处理（导航不控自转，yaw_mode 忽略）。"
+  YAW_MODE="xy_only"
+fi
+if [ "$CONTROLLER" = "omni" ] && [ "$CHASSIS_SPIN_CLI_GIVEN" = "1" ]; then
+  cat >&2 <<'EOF'
+[错误] Omni 旧链不支持小陀螺（--chassis-spin）：
+[错误]   Omni 参数文件里 yaw_policy/ spin_request 都按"导航不控自转"配置，
+[错误]   没有 MINCO 的 setSpinRequest 进线，请求发出去没人消费。
+[提示] 小陀螺请用 MINCO 迁移链（默认）：./script/start_real_nav.sh --chassis-spin
+EOF
+  exit 2
+fi
+
+# ZLIO 前端与 GICP 重定位暂不兼容（方案 §10：small_gicp 那一侧尚未放宽条件）。
+case "$LIO_FRONTEND" in
+  point_lio|zlio) ;;
+  *) echo "[错误] --lio-frontend 只支持 point_lio / zlio, 收到: $LIO_FRONTEND" >&2; exit 2 ;;
+esac
+if [ "$LIO_FRONTEND" = "zlio" ]; then
+  if [ "$RELOC_ON" = "1" ]; then
+    echo "[错误] --lio-frontend zlio 与 --reloc 不兼容：ZLIO 只接在纯 LIO 链路上" >&2
+    echo "       （--reloc 用 small_gicp + point_lio）。请加 --no-reloc / --lio。" >&2
+    exit 2
+  fi
+  if [ "$SLAM_ON" = "1" ]; then
+    echo "[错误] --lio-frontend zlio 与 --slam 不兼容：建图链路不经过 localization_launch。" >&2
+    exit 2
+  fi
+fi
+if [ -z "$ZLIO_CONFIG" ]; then
+  ZLIO_CONFIG="$PKG_DIR/config/real/zlio_mid360.yaml"
+  if [ ! -f "$ZLIO_CONFIG" ]; then
+    ZLIO_CONFIG="$PKG_SRC/config/real/zlio_mid360.yaml"
+  fi
 fi
 
 # ---------- 环境检查 ----------
@@ -744,6 +1121,13 @@ if [ "$DRY_RUN" != "1" ]; then
   WS_CHECK_PKGS=(srm27_nav_bringup srm27_nav_protocol)
   if [ "$CONTROLLER" = "minco" ]; then
     WS_CHECK_PKGS+=(srm27_minco_controller srm27_minco_core)
+  fi
+  if [ "$USE_CHASSIS_MUX" = "1" ]; then
+    # 迁移链的出口节点；缺了它 cmd_vel_chassis 没有任何发布者（车不动）。
+    WS_CHECK_PKGS+=(srm27_chassis_control)
+  fi
+  if [ "$LIO_FRONTEND" = "zlio" ]; then
+    WS_CHECK_PKGS+=(frontend localization_interfaces)
   fi
   for _pkg in "${WS_CHECK_PKGS[@]}"; do
     require_pkg_from_ws "$_pkg" || exit 1
@@ -950,31 +1334,87 @@ RSP_CMD="$RSP_CMD lidar_rpy:=$(q "$LIDAR_RPY")"
 CHASSIS_CMD="ros2 launch srm27_nav_protocol srm27_nav_protocol.launch.py"
 
 # 4) 导航栈
-NAV_CMD="ros2 launch srm27_nav_bringup nav2_stack_launch.py"
-[ -n "$NS_ARG" ] && NAV_CMD="$NAV_CMD $NS_ARG"
-NAV_CMD="$NAV_CMD slam:=$SLAM_ARG"
-NAV_CMD="$NAV_CMD use_pcd_localization:=$RELOC_ARG"
-NAV_CMD="$NAV_CMD use_lio_odometry:=$LIO_ARG"
-NAV_CMD="$NAV_CMD map:=$(q "$MAP_YAML")"
-NAV_CMD="$NAV_CMD prior_pcd_file:=$(q "$PRIOR_PCD")"
-NAV_CMD="$NAV_CMD params_file:=$(q "$PARAMS_FILE")"
-NAV_CMD="$NAV_CMD use_sim_time:=False"
-NAV_CMD="$NAV_CMD autostart:=true"
-NAV_CMD="$NAV_CMD use_composition:=$COMPOSITION_ARG"
-NAV_CMD="$NAV_CMD use_respawn:=false"
-NAV_CMD="$NAV_CMD use_fake_vel_transform:=$FAKE_ARG"
-NAV_CMD="$NAV_CMD use_velocity_smoother:=$SMOOTHER_ARG"
-NAV_CMD="$NAV_CMD cmd_vel_nav_topic:=$CMD_VEL_NAV_TOPIC"
-NAV_CMD="$NAV_CMD map_to_odom_x:=$MAP_TO_ODOM_X"
-NAV_CMD="$NAV_CMD map_to_odom_y:=$MAP_TO_ODOM_Y"
-NAV_CMD="$NAV_CMD map_to_odom_yaw:=$MAP_TO_ODOM_YAW"
-NAV_CMD="$NAV_CMD log_level:=$LOG_LEVEL"
+#   * MINCO 迁移链：走 nav_srm_real_launch.py（nav2_stack + srm_cmd_mux + 链核对）。
+#     它按 --yaw-mode 注入 yaw_policy/判停器，并把 speed_limits 合并进 mux 配置。
+#   * Omni 旧链 / 非 fakeyaw 的 MINCO：仍走 nav2_stack_launch.py（与迁移前一致）。
+Z_MUX_ARG="$(bool_arg "$USE_CHASSIS_MUX")"
+if [ "$MINCO_FAKEYAW_CHAIN" = "1" ]; then
+  NAV_CMD="ros2 launch srm27_nav_bringup nav_srm_real_launch.py"
+  [ -n "$NS_ARG" ] && NAV_CMD="$NAV_CMD $NS_ARG"
+  NAV_CMD="$NAV_CMD slam:=$SLAM_ARG"
+  NAV_CMD="$NAV_CMD use_pcd_localization:=$RELOC_ARG"
+  # 迁移链必须有里程计来源：--reloc 由 small_gicp 提供 map->odom、LIO 提供 odom->base_link；
+  # 其余模式下用 launch 的默认 True。
+  # --static 语义是"没有任何里程计来源"（只加载栅格图 + 静态 map->odom）；
+  # --reloc / --slam 由 small_gicp / slam_toolbox 提供 map->odom、LIO 只做里程计，
+  # 它们的 use_lio_odometry 必须是 False。其余（--lio / --no-reloc）才是 True。
+  if [ "$SLAM_ON" = "1" ] || [ "$RELOC_ON" = "1" ] || [ "$STATIC_ON" = "1" ]; then
+    NAV_CMD="$NAV_CMD use_lio_odometry:=False"
+  else
+    NAV_CMD="$NAV_CMD use_lio_odometry:=True"
+  fi
+  NAV_CMD="$NAV_CMD odometry_frontend:=$LIO_FRONTEND"
+  NAV_CMD="$NAV_CMD zlio_config:=$(q "$ZLIO_CONFIG")"
+  NAV_CMD="$NAV_CMD map:=$(q "$MAP_YAML")"
+  NAV_CMD="$NAV_CMD prior_pcd_file:=$(q "$PRIOR_PCD")"
+  NAV_CMD="$NAV_CMD params_file:=$(q "$PARAMS_FILE")"
+  NAV_CMD="$NAV_CMD speed_limits_file:=$(q "$SPEED_LIMITS_FILE")"
+  NAV_CMD="$NAV_CMD use_sim_time:=False"
+  NAV_CMD="$NAV_CMD autostart:=true"
+  NAV_CMD="$NAV_CMD use_composition:=$COMPOSITION_ARG"
+  NAV_CMD="$NAV_CMD use_respawn:=false"
+  NAV_CMD="$NAV_CMD use_fake_vel_transform:=$FAKE_ARG"
+  NAV_CMD="$NAV_CMD command_frame:=base_link_fake"
+  NAV_CMD="$NAV_CMD use_chassis_mux:=$Z_MUX_ARG"
+  NAV_CMD="$NAV_CMD mux_nav_topic:=cmd_vel_nav_body"
+  NAV_CMD="$NAV_CMD mux_output_topic:=cmd_vel_chassis"
+  NAV_CMD="$NAV_CMD gimbal_joint_topic:=$(q "$GIMBAL_JOINT_TOPIC")"
+  NAV_CMD="$NAV_CMD use_velocity_smoother:=$SMOOTHER_ARG"
+  NAV_CMD="$NAV_CMD cmd_vel_nav_topic:=$CMD_VEL_NAV_TOPIC"
+  NAV_CMD="$NAV_CMD yaw_mode:=$YAW_MODE"
+  NAV_CMD="$NAV_CMD map_to_odom_x:=$MAP_TO_ODOM_X"
+  NAV_CMD="$NAV_CMD map_to_odom_y:=$MAP_TO_ODOM_Y"
+  NAV_CMD="$NAV_CMD map_to_odom_yaw:=$MAP_TO_ODOM_YAW"
+  NAV_CMD="$NAV_CMD log_level:=$LOG_LEVEL"
+  NAV_CMD="$NAV_CMD use_rviz:=False"   # RViz 由第 5 步单独拉（与旧链一致）
+  # RViz 不需要两份：本入口的 rviz 由下面第 5 步起。
+else
+  NAV_CMD="ros2 launch srm27_nav_bringup nav2_stack_launch.py"
+  [ -n "$NS_ARG" ] && NAV_CMD="$NAV_CMD $NS_ARG"
+  NAV_CMD="$NAV_CMD slam:=$SLAM_ARG"
+  NAV_CMD="$NAV_CMD use_pcd_localization:=$RELOC_ARG"
+  NAV_CMD="$NAV_CMD use_lio_odometry:=$LIO_ARG"
+  NAV_CMD="$NAV_CMD odometry_frontend:=$LIO_FRONTEND"
+  NAV_CMD="$NAV_CMD zlio_config:=$(q "$ZLIO_CONFIG")"
+  NAV_CMD="$NAV_CMD map:=$(q "$MAP_YAML")"
+  NAV_CMD="$NAV_CMD prior_pcd_file:=$(q "$PRIOR_PCD")"
+  NAV_CMD="$NAV_CMD params_file:=$(q "$PARAMS_FILE")"
+  NAV_CMD="$NAV_CMD use_sim_time:=False"
+  NAV_CMD="$NAV_CMD autostart:=true"
+  NAV_CMD="$NAV_CMD use_composition:=$COMPOSITION_ARG"
+  NAV_CMD="$NAV_CMD use_respawn:=false"
+  NAV_CMD="$NAV_CMD use_fake_vel_transform:=$FAKE_ARG"
+  NAV_CMD="$NAV_CMD use_velocity_smoother:=$SMOOTHER_ARG"
+  NAV_CMD="$NAV_CMD cmd_vel_nav_topic:=$CMD_VEL_NAV_TOPIC"
+  NAV_CMD="$NAV_CMD map_to_odom_x:=$MAP_TO_ODOM_X"
+  NAV_CMD="$NAV_CMD map_to_odom_y:=$MAP_TO_ODOM_Y"
+  NAV_CMD="$NAV_CMD map_to_odom_yaw:=$MAP_TO_ODOM_YAW"
+  NAV_CMD="$NAV_CMD log_level:=$LOG_LEVEL"
+fi
 
 # 5) RViz
+RVIZ_CONFIG_PATH="$PKG_DIR/rviz/nav2_default_view.rviz"
+if [ -n "$RVIZ_CONFIG" ]; then
+  if [ ! -f "$RVIZ_CONFIG" ]; then
+    echo "[错误] --rviz-config 指定的文件不存在: $RVIZ_CONFIG" >&2
+    exit 1
+  fi
+  RVIZ_CONFIG_PATH="$(readlink -f "$RVIZ_CONFIG")"
+fi
 RVIZ_CMD="ros2 launch srm27_nav_bringup rviz_launch.py"
 [ -n "$NS_ARG" ] && RVIZ_CMD="$RVIZ_CMD $NS_ARG"
 RVIZ_CMD="$RVIZ_CMD use_sim_time:=False"
-RVIZ_CMD="$RVIZ_CMD rviz_config:=$(q "$PKG_DIR/rviz/nav2_default_view.rviz")"
+RVIZ_CMD="$RVIZ_CMD rviz_config:=$(q "$RVIZ_CONFIG_PATH")"
 
 # 6) 手柄遥控: 底盘订阅的是 cmd_vel_chassis, 这里显式指过去, 否则推杆车不动。
 JOY_CMD="ros2 launch srm27_nav_bringup joy_teleop_launch.py"
@@ -998,16 +1438,33 @@ if [ "$USE_VELOCITY_SMOOTHER" = "1" ]; then
 else
   VEL_CHAIN="controller_server (跳过 velocity_smoother)"
 fi
-if [ "$USE_FAKE_VEL_TRANSFORM" = "1" ]; then
-  VEL_CHAIN="$VEL_CHAIN → cmd_vel_nav2_result → fake_vel_transform → cmd_vel_chassis"
+if [ "$MINCO_FAKEYAW_CHAIN" = "1" ]; then
+  # 迁移链：与仿真 start_sim_nav.sh --chassis-spin 完全同构，只是执行端换成串口。
+  VEL_CHAIN="$VEL_CHAIN → cmd_vel_nav_fake → fake_vel_transform → cmd_vel_nav_body"
+  if [ "$USE_CHASSIS_MUX" = "1" ]; then
+    VEL_CHAIN="$VEL_CHAIN → srm_cmd_mux → cmd_vel_chassis → srm27_nav_protocol → 串口"
+  else
+    VEL_CHAIN="$VEL_CHAIN （不经 mux！串口节点订阅的是 cmd_vel_chassis，车不会动）"
+  fi
+elif [ "$USE_FAKE_VEL_TRANSFORM" = "1" ]; then
+  VEL_CHAIN="$VEL_CHAIN → cmd_vel_nav2_result → fake_vel_transform(legacy) → cmd_vel_chassis"
 else
   VEL_CHAIN="$VEL_CHAIN → cmd_vel_chassis (不经 fake_vel_transform)"
+fi
+
+if [ "$MINCO_FAKEYAW_CHAIN" = "1" ]; then
+  case "$YAW_MODE" in
+    auto|se2)  YAW_DESC="se2  (导航拥有 wz：车头跟路径切线)" ;;
+    spin)      YAW_DESC="spin (小陀螺：rotation_cmd → MINCO)" ;;
+    xy_only)   YAW_DESC="xy_only (导航不控自转，A/B 对照)" ;;
+    *)         YAW_DESC="$YAW_MODE" ;;
+  esac
 fi
 
 echo "================= SRM 实车 NAV 导航测试 ================="
 echo "  工作空间    : $WS_DIR"
 echo "  定位方式    : $MODE_DESC"
-echo "  slam        : $SLAM_ARG   use_pcd_localization: $RELOC_ARG   use_lio_odometry: $LIO_ARG"
+echo "  slam        : $SLAM_ARG   use_pcd_localization: $RELOC_ARG   use_lio_odometry: $LIO_ARG$([ "$MINCO_FAKEYAW_CHAIN" = "1" ] && echo '   (迁移链按定位方式自动定 use_lio_odometry)')"
 echo "  地图 (yaml) : $MAP_YAML$([ "$SLAM_ON" = "1" ] && echo '   (SLAM 模式未加载)')"
 if [ "$RELOC_ON" = "1" ]; then
   echo "  先验 PCD    : $PRIOR_PCD"
@@ -1030,6 +1487,9 @@ fi
 echo "  底盘串口    : $([ "$USE_CHASSIS" = "1" ] && echo 'srm27_nav_protocol.launch.py' || echo '不启动')"
 echo "  命名空间    : ${NAMESPACE:-<根命名空间>}"
 echo "  组合节点    : $COMPOSITION_ARG    RViz: $RVIZ_ARG    手柄: $USE_JOY"
+if [ "$USE_RVIZ" = "1" ]; then
+  echo "  RViz 配置   : ${RVIZ_CONFIG:-<包内 nav2_default_view.rviz>}"
+fi
 if [ "$RELOC_ON" != "1" ] && [ "$SLAM_ON" != "1" ]; then
   echo "  map->odom   : x=$MAP_TO_ODOM_X y=$MAP_TO_ODOM_Y yaw=$MAP_TO_ODOM_YAW (静态)"
   if [ "$LIO_ON" = "1" ] && [ "$MAP_TO_ODOM_X" = "0.0" ] && [ "$MAP_TO_ODOM_Y" = "0.0" ] \
@@ -1039,6 +1499,35 @@ if [ "$RELOC_ON" != "1" ] && [ "$SLAM_ON" != "1" ]; then
   fi
 fi
 echo "  速度链路    : $VEL_CHAIN"
+if [ "$MINCO_FAKEYAW_CHAIN" = "1" ]; then
+  echo "  wz 归属     : 导航(上位机)    航向策略: $YAW_DESC"
+  echo "  速度限幅    : $SPEED_LIMITS_FILE"
+  if awk -v v="$CHASSIS_SPIN_WZ" 'BEGIN{ exit (v == 0) ? 0 : 1 }'; then
+    echo "  底盘自转    : 关 (要转加 --chassis-spin [rad/s], 缺省 2.0; 首跑建议 0.3)"
+  else
+    echo "  底盘自转    : $CHASSIS_SPIN_WZ rad/s (Nav2 就绪后自动下发 rotation_cmd)"
+    echo "                mux wz_max 会在这一层钳住 (首跑 1.5 rad/s, 见 speed_limits.yaml)"
+  fi
+  if [ -n "$GIMBAL_JOINT_TOPIC" ]; then
+    echo "  云台关节角  : $GIMBAL_JOINT_TOPIC → /joint_states (gimbal_yaw_joint)"
+  else
+    echo "  云台        : 假定固定 (无关节角回传)。若下位机在转云台，base_link yaw 会差一个云台角！"
+  fi
+  if [ "$GIMBAL_SPIN_CLI_GIVEN" = "1" ]; then
+    if awk -v v="$GIMBAL_SPIN_WZ" 'BEGIN{ exit (v == 0) ? 0 : 1 }'; then
+      echo "  云台自转    : 关 (--gimbal-spin 0)"
+    else
+      echo "  云台自转    : 请求 $GIMBAL_SPIN_WZ rad/s —— 实车不执行（下位机驱动，无指令通道）"
+    fi
+  fi
+  if [ "$LIO_FRONTEND" = "zlio" ]; then
+    echo "  里程计前端  : ZLIO ($ZLIO_CONFIG)"
+  else
+    echo "  里程计前端  : Point-LIO"
+  fi
+else
+  echo "  wz 归属     : 不由导航控制 (旧链)"
+fi
 echo "========================================================="
 
 # ---------- 启动 ----------
@@ -1143,6 +1632,46 @@ for i in "${!STEP_TITLES[@]}"; do
   open_term "$title" "$cmd"
 done
 
+# ---------- 底盘小陀螺（迁移链）：Nav2 就绪后自动下发 ----------
+# 契约与手动的 script/spin_control.sh 完全一致（同一话题、同一 PID 文件）：
+#   rotation_cmd --20 Hz--> MINCO(yaw_policy.mode=spin) --cmd_vel_nav_fake-->
+#   fake_vel_transform --> srm_cmd_mux --> cmd_vel_chassis --> 串口
+# 所以：停转 ./script/spin_control.sh off，查看 ./script/spin_control.sh status。
+# ⚠ wz 归导航：控制器只在**跟随路径时**输出速度，没有导航目标时底盘不会转 —— 这不是故障。
+if [ "$MINCO_FAKEYAW_CHAIN" = "1" ] \
+   && awk -v v="$CHASSIS_SPIN_WZ" 'BEGIN{ exit (v == 0) ? 1 : 0 }'; then
+  if [ -n "$NAMESPACE" ]; then
+    SPIN_TOPIC="/$NAMESPACE/rotation_cmd"
+  else
+    SPIN_TOPIC="/rotation_cmd"
+  fi
+  SPIN_ABS="$(awk -v v="$CHASSIS_SPIN_WZ" 'BEGIN{ printf "%.3f", (v < 0) ? -v : v }')"
+  echo "[底盘自转] 等 Nav2 就绪（${SPIN_TOPIC} 有订阅者，最长 ${CHASSIS_SPIN_READY_TIMEOUT}s）..."
+  _spin_deadline=$(( $(date +%s) + CHASSIS_SPIN_READY_TIMEOUT ))
+  _spin_subs=""
+  while [ "$(date +%s)" -lt "$_spin_deadline" ]; do
+    _spin_subs="$(bash -c "source '$WS_DIR/install/setup.bash' >/dev/null 2>&1; \
+      timeout 6 ros2 topic info '$SPIN_TOPIC' 2>/dev/null" 2>/dev/null \
+      | sed -n 's/^Subscription count: //p' | head -n 1)" || true
+    [ -n "$_spin_subs" ] && [ "$_spin_subs" != "0" ] && break
+    sleep 2
+  done
+  if [ -z "$_spin_subs" ] || [ "$_spin_subs" = "0" ]; then
+    echo "[警告] ${CHASSIS_SPIN_READY_TIMEOUT}s 内没等到 ${SPIN_TOPIC} 的订阅者（MINCO 还没起来？）" >&2
+    echo "       仍会启动发布器：等 Nav2 上线后请求会自动被消费。" >&2
+  fi
+  if ROBOT_NS="$NAMESPACE" SPIN_MAX_WZ="$SPIN_ABS" \
+     "$SCRIPT_DIR/spin_control.sh" on "$CHASSIS_SPIN_WZ"; then
+    printf '底盘自转  : %s rad/s 已下发 (20 Hz)；停转: %s/spin_control.sh off\n' \
+      "$CHASSIS_SPIN_WZ" "$SCRIPT_DIR"
+    if awk -v a="$SPIN_ABS" -v m="1.5" 'BEGIN{ exit !(a > m) }'; then
+      echo "[提示] 请求 ${CHASSIS_SPIN_WZ} rad/s 超过 mux 的 wz_max(首跑 1.5)，实际会被限幅。"
+    fi
+  else
+    echo "[警告] spin_control.sh on 失败，底盘不会自转。" >&2
+  fi
+fi
+
 cat <<EOF
 
 启动流程处理完成 (终端模式: $OPEN_MODE)。
@@ -1155,6 +1684,27 @@ cat <<EOF
   - srm27_nav_protocol 没有任何急停 service, 软件层面唯一的停车手段就是上面那条零速。
   - 一键停整条链路 (先发零速再结束进程):
       ./script/start_real_nav.sh --stop
+EOF
+
+if [ "$MINCO_FAKEYAW_CHAIN" = "1" ]; then
+cat <<'EOF'
+  - 迁移链多了一道软件出口闸（mux），可以直接清零并保持零速：
+      ros2 service call /srm_cmd_mux/stop_all std_srvs/srv/Trigger
+      ros2 service call /srm_cmd_mux/resume_all std_srvs/srv/Trigger
+    ⚠ 它是**上位机侧**的闸，不是急停：串口节点仍在按看门狗重发零速，但 C 板固件没有
+      超时保护，进程被 kill -9 / 掉电时它不生效。物理急停永远是第一手段。
+
+  小陀螺 (请求经 rotation_cmd 直接进 MINCO，wz 仍由导航输出):
+    ./script/start_real_nav.sh --chassis-spin 0.3    # 首跑：小转速先确认方向
+    ./script/spin_control.sh on 1.0                  # 运行中改转速（需以 spin 模式启动）
+    ./script/spin_control.sh status                  # 查看请求/实际转速/三层速度
+    ./script/spin_control.sh off                     # 撤回请求（停转）
+
+  云台: 实车由下位机驱动，协议暂无关节角回传 → 保持固定，或按文档接
+    --gimbal-joint-topic <话题>（见 docs/仿真链迁移实车实施记录(ai).md）。
+EOF
+fi
+cat <<EOF
 
 链路自检 (新终端):
   cd '$WS_DIR' && source install/setup.bash
@@ -1163,8 +1713,25 @@ cat <<EOF
   ros2 run tf2_ros tf2_echo odom base_link                   # LIO 里程计 TF (--lio/--reloc)
   ros2 run tf2_ros tf2_echo map base_link                    # 完整 TF 链
   ros2 topic echo /cmd_vel_controller --once                 # 控制器原始输出
+EOF
+
+if [ "$MINCO_FAKEYAW_CHAIN" = "1" ]; then
+cat <<'EOF'
+  ros2 topic echo /cmd_vel_nav_fake --once                   # 导航请求 (fake 系, 含 wz)
+  ros2 topic echo /cmd_vel_nav_body --once                   # fake 转换后 (车体系, wz 应逐条相同)
+  ros2 topic echo /cmd_vel_chassis --once                    # mux 输出 = 底盘实际收到的速度
+  ros2 topic hz /cmd_vel_chassis                             # 应为 200 Hz 左右 (mux 合成频率)
+  ros2 run tf2_ros tf2_echo base_link base_link_fake         # fakeyaw TF: yaw 应等于 -底盘 yaw
+  ros2 topic echo /srm_cmd_mux/diagnostics --once            # mux 诊断 (钳位/超时计数)
+  ros2 topic echo /fake_vel_transform/diagnostics --once     # fake 诊断 (wz 透传/过期 yaw)
+EOF
+else
+cat <<'EOF'
   ros2 topic echo /cmd_vel_chassis --once                    # 底盘实际收到的速度 (最终出口)
   ros2 topic hz /cmd_vel_chassis                             # 应有持续输出
+EOF
+fi
+cat <<EOF
   ros2 topic hz /odometry                                    # 实车约 10 Hz (跟随雷达帧率, 不是 50 Hz)
   ros2 node list                                             # 各节点是否都起来了
 EOF
@@ -1178,9 +1745,6 @@ MINCO 专属自检 (按顺序确认, 任一步不符就不要放开跑):
        期望: srm27_minco_controller::MincoMpcController
        若显示 Omni, 说明参数文件选错了 —— 本脚本会用 --controller minco 选对文件,
        但如果 --stop 没清干净、旧进程还在, 也会看到旧值。
-  2) 只有一份速度出口, 且没有 fake_vel_transform 抢:
-       ros2 node list | grep -i fake_vel_transform      # 应当没有任何输出
-       ros2 topic info /cmd_vel_chassis -v              # 发布者应只有 velocity_smoother
   3) 轨迹真的算出来了:
        ros2 topic hz /FollowPath/minco_trajectory
        ros2 topic hz /FollowPath/mpc_prediction
@@ -1189,9 +1753,34 @@ MINCO 专属自检 (按顺序确认, 任一步不符就不要放开跑):
        关注: planning_result=success、planning_time_ms、minimum_clearance>0、
              state_age 与 map_age 都很小、missed_deadline_count 不持续增长。
        出现 planning_result 非 success 时, 先看它的 reason 文本再动权重。
-  5) 阶段一 MPC 没有自转权限: /cmd_vel_controller 与 /cmd_vel_chassis 的 wz 应恒为 0。
+EOF
+if [ "$MINCO_FAKEYAW_CHAIN" = "1" ]; then
+cat <<'EOF'
+  2) 迁移链的接线（fake 是链的一环，必须**在**，而不是"不在"）:
+       ros2 node list | grep -i -E 'fake_vel_transform|srm_cmd_mux'   # 两个都应在
+       ros2 topic info /cmd_vel_chassis -v                            # 发布者应**只有** srm_cmd_mux
+       ros2 run tf2_ros tf2_echo base_link base_link_fake             # yaw ≈ -底盘 yaw
+       ros2 param get /controller_server FollowPath.yaw_policy.mode    # se2 / spin / xy_only
+  5) 导航拥有 wz（se2/spin 模式）: 跟随路径时 /cmd_vel_nav_fake 的 wz 应非零，
+     且与 /cmd_vel_nav_body、/cmd_vel_chassis 的 wz **逐层相同**
+     （fake 只转平移不碰 wz；mux 只做钳位）。xy_only 模式下三层 wz 恒为 0 才是对的。
+     若请求了自转而 /cmd_vel_chassis 的 wz 仍是 0：先看 mux 的 wz_max、再看串口节点。
+  6) 速度没有被任何一层静默钳住: /cmd_vel_chassis 的合速度能达到
+     min(controllers limits, velocity_smoother, mux v_max, 串口 max_vx) 的 90% 以上。
+     想知道"是哪一层卡住"，跑:
+       python3 src/srm27_navigation/srm27_nav_bringup/scripts/srm_speed_limits_check.py
+EOF
+else
+cat <<'EOF'
+  2) 只有一份速度出口, 且没有 fake_vel_transform 抢:
+       ros2 node list | grep -i fake_vel_transform      # 应当没有任何输出
+       ros2 topic info /cmd_vel_chassis -v              # 发布者应只有 velocity_smoother
+  5) 旧链 MPC 没有自转权限: /cmd_vel_controller 与 /cmd_vel_chassis 的 wz 应恒为 0。
   6) 速度没有被任何一层静默钳住: 实际 /cmd_vel_chassis 的合速度应能达到
-     limits.max_linear_speed (默认 1.5) 的 90% 以上, 且不长期顶在某个更小的值上。
+     limits.max_linear_speed 的 90% 以上, 且不长期顶在某个更小的值上。
+EOF
+fi
+cat <<EOF
 
   曲线对照 (判断"路径不对"还是"跟踪不对"):
      RViz 里同时显示全局路径 (map)、/FollowPath/planning_input_path (odom)、

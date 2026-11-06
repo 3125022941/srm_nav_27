@@ -15,17 +15,22 @@
 """速度出口链路（srm_cmd_mux）。
 
 链路：
-  <nav_topic> ─ srm_cmd_mux ── cmd_vel_sim
+  <nav_topic> ─ srm_cmd_mux ── <output_topic>
 
 2026-10-19：独立自转链（rotation_controller / rotation_test_sender /
 rotation_velocity）已删除。`wz` 只由上位机（导航栈）产生，本链路不再有第二路自转输入，
 也没有 `wz_control_mode` 开关：mux 收到的导航 `angular.z` 就是最终执行的 wz。
 
 `nav_topic` 由导航入口按链路给出：
-  * fakeyaw 迁移链（唯一支持的链路）：cmd_vel_nav_body（fake_vel_transform 的输出）。
+  * 仿真入口（nav_srm_simulation_launch.py）：cmd_vel_nav_body（fake_vel_transform 的输出），
+    输出仍叫 cmd_vel_sim；
+  * 实车入口（nav_srm_real_launch.py）：同样是 cmd_vel_nav_body，但**输出必须改成
+    cmd_vel_chassis** —— 那是 srm27_nav_protocol 唯一订阅的话题（串口节点的出口名）。
+    这两个话题都由 launch 参数给出，配置文件里保留默认值只为"参数从哪来"可见。
 
 速度限幅（vx_max / vy_max / v_max / wz_max）与超时仍由
-config/simulation/speed_limits.yaml 在启动时合并进来（唯一来源）。
+config/{simulation,real}/speed_limits.yaml 在启动时合并进来（唯一来源）：
+仿真入口传 config/simulation 那份，实车入口传 config/real 那份。
 """
 
 import os
@@ -46,9 +51,10 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration("use_sim_time")
     params_file = LaunchConfiguration("params_file")
     nav_topic = LaunchConfiguration("nav_topic")
+    output_topic = LaunchConfiguration("output_topic")
 
-    # mux 的 nav_topic 也走 RewrittenYaml：配置文件里仍然写着这个键（"参数从哪来"在文件里
-    # 可见），启动时按链路覆盖，避免"两处定义、一处静默生效"。
+    # mux 的 nav_topic / output_topic 也走 RewrittenYaml：配置文件里仍然写着这个键
+    # （"参数从哪来"在文件里可见），启动时按链路覆盖，避免"两处定义、一处静默生效"。
     configured = ParameterFile(
         RewrittenYaml(
             source_file=params_file,
@@ -56,6 +62,7 @@ def generate_launch_description():
             param_rewrites={
                 "use_sim_time": use_sim_time,
                 "nav_topic": nav_topic,
+                "output_topic": output_topic,
             },
             convert_types=True,
         ),
@@ -87,6 +94,15 @@ def generate_launch_description():
                 description=(
                     "mux 的导航输入话题；fakeyaw 迁移链上是 fake_vel_transform 的输出 "
                     "cmd_vel_nav_body。"
+                ),
+            ),
+            DeclareLaunchArgument(
+                "output_topic",
+                default_value="cmd_vel_sim",
+                description=(
+                    "mux 的输出话题，也是它**唯一**发布的话题。仿真默认 cmd_vel_sim"
+                    "（速度适配器订阅它）；实车入口必须传 cmd_vel_chassis"
+                    "（srm27_nav_protocol 订阅它），否则串口节点收不到任何速度。"
                 ),
             ),
             cmd_mux,

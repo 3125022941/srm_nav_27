@@ -147,11 +147,15 @@ source install/setup.bash            # 只用到标准消息时可以省
 
 | 面板 | 内容 | 怎么读 |
 | --- | --- | --- |
-| ① yaw 曲线 | 真值 `chassis_odometry_gt` 与导航用的 `/odometry` 两条线叠一起（`--with-raw` 再加一条 `lidar_odometry`）；曲线做了 unwrap，跨越 ±180° 也不会断 | 两条线离得越远，方向越错 |
+| ① yaw 曲线 | 真值 `chassis_odometry_gt`、导航用的 `/odometry`（`--with-raw` 再加一条 `lidar_odometry`）、以及 **`fake_vel_transform` 的预测 yaw**（`yaw_debug`：odom yaw + ∫wz dt，外推到指令生效时刻）；曲线做了 unwrap | 两条线离得越远，方向越错。粉色那条比导航线更贴真值 → 外推起效（统计里会直接给 `|pred−GT|` vs `|odom−GT|`） |
 | ② yaw 误差 | 导航 − 真值，折到 ±180°，带 ±2° 绿带 | 贴着 0 = 换算正确；在"开始动/云台转起来"之后才拉开 = LIO 动态下配准不住 |
 | ③ x-y 轨迹 | 真值轨迹 vs 导航轨迹 | 导航画出**小圆**而真值不动 → 云台离轴杠杆臂（本车 ≈13 cm）残差 |
 | ④ 速度符号 | `cmd_vel_sim.linear.x` 与 `/odometry.twist.x` | 两条线长期**不同号** → 速度方向/坐标约定反了（"前进变后退"的另一半原因） |
 | ⑤ 姿态 roll/pitch | 真值 roll/pitch、导航 roll/pitch（被 planarize 清零，恒≈0）、**ZLIO 原始 roll/pitch**、**bridge roll/pitch** | 后两条是识别「odom 系被转了一个安装角」的关键：正确时两者都 ≈ 雷达安装倾角（仿真 30° roll）。若 bridge 比 raw 多出约 30° → `T_off` 少乘了 `R_0⁻¹`（见实施记录 §5.5）。⚠ 导航那条线被 `planarize()` 清零，**看不出**这种倾斜 |
+
+> ⚠ **用哪个时钟**：`--sim-time auto`（默认）会在检测到 `/clock` 时自动切到**仿真时间**。
+> 仿真比实时慢（实测 RTF≈0.77），用墙钟去对仿真时间戳，所有延迟/年龄都会差 1/RTF 倍（约 30%）。
+> 显式控制：`--sim-time on` / `--sim-time off`。
 
 用法：
 

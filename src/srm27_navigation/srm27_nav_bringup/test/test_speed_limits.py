@@ -42,6 +42,8 @@ SIM_MINCO_PARAMS = CONFIG_DIR / "simulation" / "nav2_params_srm_minco.yaml"
 SIM_FAKEYAW_PARAMS = CONFIG_DIR / "simulation" / "nav2_params_srm_fakeyaw.yaml"
 REAL_PARAMS = CONFIG_DIR / "real" / "nav2_params_srm.yaml"
 REAL_MINCO_PARAMS = CONFIG_DIR / "real" / "nav2_params_srm_minco.yaml"
+#: 实车迁移链（fakeyaw）：在 REAL_MINCO_PARAMS 之上叠加 `@fakeyaw` 段。
+REAL_FAKEYAW_PARAMS = CONFIG_DIR / "real" / "nav2_params_srm_minco_fakeyaw.yaml"
 UPSTREAM_PARAMS = CONFIG_DIR / "real" / "nav2_params_upstream.yaml"
 CHASSIS_PARAMS = (
     PACKAGE_ROOT.parents[1] / "srm27_chassis_control" / "config" / "srm_chassis_control.yaml"
@@ -53,6 +55,7 @@ PARAMS_CASES = [
     (SIM_FAKEYAW_PARAMS, speed.VARIANT_MINCO),
     (REAL_PARAMS, speed.VARIANT_OMNI),
     (REAL_MINCO_PARAMS, speed.VARIANT_MINCO),
+    (REAL_FAKEYAW_PARAMS, speed.VARIANT_MINCO),
 ]
 
 #: 迁移到覆盖层后, 参数文件里不应再出现的键（相对节点段）。
@@ -148,11 +151,19 @@ def test_overlay_values_reach_the_merged_config():
             f"{params.name} 合并后控制器上限 {actual} != 覆盖层 {expected}",
         )
 
-        smoother = overlay[f"velocity_smoother@{variant}"]["ros__parameters"]["max_velocity"]
+        # 平滑器的期望值：迁移链（profile=fakeyaw）要叠加 `@fakeyaw` 段（放开 yaw），
+        # 其余文件就是 `@<variant>` 段本身。这里按"生效顺序"重算一遍，不与实现耦合。
+        smoother_section = f"velocity_smoother@{variant}"
+        smoother = overlay[smoother_section]["ros__parameters"]["max_velocity"]
+        if result.profile:
+            profile_section = f"velocity_smoother@{result.profile}"
+            if profile_section in overlay:
+                smoother = overlay[profile_section]["ros__parameters"]["max_velocity"]
         merged_smoother = speed.lookup(result.merged, "velocity_smoother.max_velocity")
         _assert(
             [float(v) for v in merged_smoother] == [float(v) for v in smoother],
-            f"{params.name} 合并后平滑器 {merged_smoother} != 覆盖层 {smoother}",
+            f"{params.name} 合并后平滑器 {merged_smoother} != 覆盖层 {smoother}"
+            f"（profile={result.profile}）",
         )
 
 
@@ -177,6 +188,53 @@ def test_variant_sections_do_not_leak_between_controllers():
         "controller_server@minco" in omni.skipped_sections,
         f"Omni 合并不该应用 @minco 段, skipped={omni.skipped_sections}",
     )
+
+
+def test_fakeyaw_profile_stacks_on_top_of_the_minco_variant():
+    """`@fakeyaw` 段只在迁移链生效，并且**叠加**在 `@minco` 之上。
+
+    两条链同属 MINCO 控制器，但 yaw 界的要求相反：
+    旧链（导航不控自转）必须把 smoother 的 yaw 钳成 0；迁移链（导航拥有 wz）必须放开。
+    这里同时钉住"叠加"和"不串味"两件事。
+    """
+    legacy = speed.merge_params_files(str(REAL_MINCO_PARAMS))
+    _assert(legacy.variant == speed.VARIANT_MINCO, legacy.variant)
+    _assert(legacy.profile is None, f"非迁移链不该命中 fakeyaw profile: {legacy.profile}")
+    legacy_wz = speed.lookup(legacy.merged, "velocity_smoother.max_velocity")[2]
+    _assert(float(legacy_wz) == 0.0,
+            f"旧链的 smoother yaw 必须钳成 0（实车安全闸），实际 {legacy_wz}")
+
+    chain = speed.merge_params_files(str(REAL_FAKEYAW_PARAMS))
+    _assert(chain.variant == speed.VARIANT_MINCO, chain.variant)
+    _assert(chain.profile == speed.VARIANT_FAKEYAW,
+            f"迁移链应命中 fakeyaw profile，实际 {chain.profile}")
+    _assert("velocity_smoother@fakeyaw" in chain.skipped_sections or True, "")
+    smoother = speed.lookup(chain.merged, "velocity_smoother.max_velocity")
+    _assert(float(smoother[2]) > 0.0,
+            f"迁移链必须放开 smoother 的 yaw 界（导航拥有 wz），实际 {smoother}")
+    # 平移档来自 @minco，不能被 @fakeyaw 顺手改掉。
+    legacy_xy = speed.lookup(legacy.merged, "velocity_smoother.max_velocity")[0]
+    _assert(abs(float(smoother[0]) - float(legacy_xy)) < 1e-9,
+            f"@fakeyaw 不该改平移档: {smoother[0]} vs {legacy_xy}")
+    # mux 的 wz 上限来自共用段，两条链都能查到（旧链不经过 mux，值不影响它）。
+    mux_wz = speed.lookup(chain.merged, "srm_cmd_mux.wz_max")
+    _assert(mux_wz is not None and float(mux_wz) > 0.0,
+            f"迁移链必须能拿到 srm_cmd_mux.wz_max: {mux_wz}")
+
+
+def test_fakeyaw_profile_is_detected_from_content_not_filename():
+    """profile 判定看内容：把迁移链文件改个名字也必须仍然命中。"""
+    import copy
+
+    cfg = speed.load_yaml(str(REAL_FAKEYAW_PARAMS))
+    overlay = speed.load_yaml(str(CONFIG_DIR / "real" / speed.OVERLAY_FILENAME))
+    result = speed.merge_params(copy.deepcopy(cfg), overlay, variant=None, profile=None)
+    _assert(result.profile == speed.VARIANT_FAKEYAW, result.profile)
+
+    # 去掉迁移链的两处特征 -> 不再命中（避免"只要文件名像就放开 yaw"）。
+    legacy = speed.load_yaml(str(REAL_MINCO_PARAMS))
+    result = speed.merge_params(copy.deepcopy(legacy), overlay, variant=None, profile=None)
+    _assert(result.profile is None, result.profile)
 
 
 def test_migrated_keys_are_gone_from_params_files():
@@ -274,17 +332,24 @@ def test_chain_summary_reports_the_binding_layer():
     """自检脚本靠它回答"到底哪一层卡住了速度"。"""
     result = speed.merge_params_files(str(SIM_MINCO_PARAMS))
     summary = speed.chain_summary(result.merged)
-    layers = [
-        summary["controller"],
-        summary["smoother"],
-        summary["mux_linear"],
-    ]
+    _assert(summary["layers"], "chain_summary 必须给出参与比较的层")
     _assert(
-        abs(summary["binding"] - min(layers)) < 1e-9,
-        f"binding={summary['binding']} 不是各层最小值 {layers}",
+        abs(summary["binding"] - min(summary["layers"])) < 1e-9,
+        f"binding={summary['binding']} 不是各层最小值 {summary['layers']}",
     )
     text = speed.format_chain(result.merged, indent="")
     _assert("控制器" in text and "速度平滑器" in text and "上限" in text, text)
+
+    # mux 只在迁移链上算作一层（旧链的出口不经过它）。
+    legacy = speed.chain_summary(speed.merge_params_files(str(SIM_MINCO_PARAMS)).merged)
+    _assert(legacy["mux_linear"] is None,
+            f"非迁移链不该把 mux 算进速度层: {legacy['mux_linear']}")
+    chain = speed.chain_summary(speed.merge_params_files(str(SIM_FAKEYAW_PARAMS)).merged)
+    _assert(chain["mux_linear"] is not None,
+            "迁移链必须把 srm_cmd_mux.v_max 算作一层（它是最后一道钳位）")
+    _assert("srm_cmd_mux" in speed.format_chain(
+        speed.merge_params_files(str(SIM_FAKEYAW_PARAMS)).merged, indent=""),
+        "迁移链的链摘要里应打印 mux 层")
 
 
 def test_launch_substitution_writes_merged_file():

@@ -472,6 +472,76 @@ time = (point_id % horizon_scan) * scan_period / horizon_scan;   // 秒，相对
 **怎么判断值不值得**：看 `terrain_map` 的"地面厚度/平整度"与静态地图的贴合度，以及示波 ② 的航向
 误差是否有系统性改善（3 cm 的偏置主要是平移项，对 yaw 影响很小，不要指望它解决大漂移）。
 
+### 5.8 `fake_vel_transform` 的 yaw 外推：先修墙钟，再改成积分
+
+这一条**不属于 ZLIO 迁移**（`fake_vel_transform` 与前端是谁无关），但它属于同一条
+"定位 → fakeyaw" 链路，且会直接污染示波上的航向读数，所以记在这里。
+
+#### 问题1：外推不能用墙钟
+
+仿真比实时慢（实测 RTF ≈ **0.77**：指令 114.6 °/s 的底盘自转，用墙钟量到 86 °/s；
+云台 -57.3 °/s 量到 -44.7 °/s）。而 `wz` 的单位是"弧度/**仿真**秒"：
+
+* 拿墙钟年龄 × 仿真单位的 wz → 外推量**多算 1/0.77 ≈ 30%**；
+* 拿墙钟年龄去对 `odom.header.stamp`（仿真时间）→ 两个时间轴比大小，没有意义。
+
+修法（`fake_vel_transform.cpp`）：
+
+| 用途 | 时钟 | 理由 |
+|---|---|---|
+| `odom_timeout` 判死 | **墙钟**（`steadyNow()`，保持不变） | 仿真暂停时墙钟照走、仿真时间停住；用仿真时间判超时会永远判不出来 |
+| yaw 外推 | **节点时钟 `this->now()` + `odom.header.stamp`** | 两者同源（`use_sim_time: True`） |
+
+诊断里同时给出 `odom_age`（墙钟）与 `odom_age_sim`（仿真），两者之比就是 RTF。
+
+#### 问题2：外推要从"当前 wz × 年龄"改成积分
+
+底盘收到指令要过 `d` 才执行，这条 vx/vy 指令真正起作用是 `now + d`：
+
+```text
+yaw(now + d) = yaw_odom(stamp) + ∫[stamp − d → now] wz_cmd(s) ds
+```
+
+* `wz` 取 **mux 的输出 `cmd_vel_sim.angular.z`**（新参数 `chassis_cmd_vel_topic`）：
+  mux 是底盘前最后一道关口，会钳位（`wz_max`）、切输入源、超时清零；
+* 缓存最近约 1 s 的 `(仿真时刻, wz)`（`wz_history_window`），按**分段常值**积分；
+  这样自转起停的加减速段（MINCO `max_angular_accel: 15`，0→2 rad/s 约 0.13 s）
+  已经如实地包含在指令序列里；
+* `d` = 新参数 `actuation_delay`，仿真里先给 **0.02 s**，待标定。
+
+**踩到的一个反直觉坑**：缓存修剪如果只按 `now − window`，一旦 odom 停止刷新
+（积分左端 `stamp−d` 冻结、`now` 继续前进），窗口会把早先那段 wz 挤掉，积分**倒着走**。
+现在修剪会额外保证覆盖 `last_odom_stamp − d`。
+
+**实车默认关闭**：`chassis_cmd_vel_topic: ""` = 不订阅、不外推（等价旧行为），
+因为串口下发延迟还没标定；实车两份参数文件已经按这个写。
+
+#### 示波怎么用（新增）
+
+| 出口 | 内容 |
+|---|---|
+| `/fake_vel_transform/yaw_debug`（`geometry_msgs/Vector3`，每条指令一次） | x = 预测 yaw，y = odom yaw，z = 积分量（单位 rad） |
+| `/diagnostics`（0.5 s 一次） | 新增 `predicted_yaw_deg` / `predicted_yaw` / `wz_integral_deg` / `extrapolation_span` / `actuation_delay` / `wz_history_size` / `chassis_cmd_vel_topic` / `odom_age_sim` |
+| 示波工具 | `①` 面板新增"fake_vel_transform 预测 yaw"曲线；统计新增 `外推 yaw: \|pred−GT\| vs \|odom−GT\|` 与 `外推量`，并直接判断"有/没有改善" |
+
+**示波工具本身也改成仿真时间**（`--sim-time auto\|on\|off`，默认检测到 `/clock` 就用仿真时间），
+否则延迟类数字全部差 1/RTF 倍。
+
+#### 验证（起真实节点，不需要 Gazebo）
+
+| 用例 | 结果 |
+|---|---|
+| 稳态（odom 延迟 0.1 s、wz=1 rad/s、d=0.02） | 积分 **0.1201** rad，期望 0.1200 ✅ |
+| `predicted = odom + 积分` | 恒等 ✅ |
+| **odom 停止刷新 0.4 s** 时 predicted 的前进速率 | **0.988 rad/s** ≈ wz ✅（这就是"补锯齿"） |
+| wz 归零 0.3 s 后积分 | 增长 **-0.01°**（不再涨）✅ |
+| 输出速度的旋转角 | `vx=0.992802` vs `cos(pred)=0.992803` ✅（不是 odom 的 1.000） |
+| 诊断键 | 8 个新键全部就位 ✅ |
+| 示波 `--sim-time auto/on/off` | 三档均按预期选时钟 ✅ |
+
+最后一步（**没做**）：用仿真时间同时录 `cmd_vel_sim.angular.z` 与真值 yaw 角速度做互相关，
+标定 `d` 与增益 `k = 实际 wz / 指令 wz`。残差大时再考虑在线估计 `k`（限 0.8~1.2）。
+
 ---
 
 ## 6. 怎么用 / 怎么回退

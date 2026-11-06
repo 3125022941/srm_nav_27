@@ -21,7 +21,7 @@ from launch.actions import DeclareLaunchArgument, GroupAction, SetEnvironmentVar
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import LoadComposableNodes, Node
-from launch_ros.descriptions import ComposableNode, ParameterFile
+from launch_ros.descriptions import ComposableNode, ParameterFile, ParameterValue
 from nav2_common.launch import RewrittenYaml
 
 
@@ -51,6 +51,19 @@ def generate_launch_description():
     # zlio_bridge 承担，所以两者成对起停。--gicp 下暂不启用 ZLIO（方案 §10）。
     odometry_frontend = LaunchConfiguration("odometry_frontend")
     zlio_config = LaunchConfiguration("zlio_config")
+    # ZLIO 的输入接线（仿真/实车不同，见下方 start_zlio_node 的注释）：
+    #   仿真: pointcloud2 + velodyne_points + 秒制 time 字段 + IMU 单位 m/s² + front_mid360
+    #   实车: livox(CustomMsg) + livox/lidar + livox_imu + IMU 单位 g(scale 9.81)
+    # 这些不是"算法参数"（算法参数在 zlio_config 里），而是**话题/单位/帧名**，
+    # 所以用 launch 参数暴露，由入口按目标平台给值。
+    zlio_input_type = LaunchConfiguration("zlio_input_type")
+    zlio_lidar_topic = LaunchConfiguration("zlio_lidar_topic")
+    zlio_imu_topic = LaunchConfiguration("zlio_imu_topic")
+    zlio_point_time_field = LaunchConfiguration("zlio_point_time_field")
+    zlio_point_time_scale = LaunchConfiguration("zlio_point_time_scale")
+    zlio_point_time_absolute = LaunchConfiguration("zlio_point_time_absolute")
+    zlio_imu_acceleration_scale = LaunchConfiguration("zlio_imu_acceleration_scale")
+    zlio_body_frame = LaunchConfiguration("zlio_body_frame")
     map_to_odom_x = LaunchConfiguration("map_to_odom_x")
     map_to_odom_y = LaunchConfiguration("map_to_odom_y")
     map_to_odom_yaw = LaunchConfiguration("map_to_odom_yaw")
@@ -164,6 +177,48 @@ def generate_launch_description():
         default_value=os.path.join(bringup_dir, "config", "simulation", "zlio_mid360.yaml"),
         description="ZLIO 算法配置文件绝对路径 (z-loc 的严格校验会拒绝未知键)",
     )
+    # ZLIO 的输入接线。默认值 = 仿真（pointcloud2/velodyne_points/front_mid360）；
+    # 实车入口会覆盖成 livox/livox_lidar/livox_imu 且 imu_acceleration_scale=9.81。
+    declare_zlio_input_type_cmd = DeclareLaunchArgument(
+        "zlio_input_type",
+        default_value="pointcloud2",
+        description="LiDAR 消息格式: pointcloud2（仿真）或 livox（实车 CustomMsg）",
+    )
+    declare_zlio_lidar_topic_cmd = DeclareLaunchArgument(
+        "zlio_lidar_topic",
+        default_value="velodyne_points",
+        description="LiDAR 输入话题（仿真 velodyne_points / 实车 livox/lidar）",
+    )
+    declare_zlio_imu_topic_cmd = DeclareLaunchArgument(
+        "zlio_imu_topic",
+        default_value="livox/imu_saturated",
+        description="IMU 输入话题（默认取饱和保护的输出，不订原始 IMU）",
+    )
+    declare_zlio_point_time_field_cmd = DeclareLaunchArgument(
+        "zlio_point_time_field",
+        default_value="time",
+        description="PointCloud2 的逐点时间字段名（livox 输入不使用）",
+    )
+    declare_zlio_point_time_scale_cmd = DeclareLaunchArgument(
+        "zlio_point_time_scale",
+        default_value="1.0",
+        description="逐点时间换算成秒的倍率：纳秒 1e-9 / 秒 1.0（须 >0）",
+    )
+    declare_zlio_point_time_absolute_cmd = DeclareLaunchArgument(
+        "zlio_point_time_absolute",
+        default_value="False",
+        description="逐点时间是否为绝对时间；关闭时按相对 header.stamp 的偏移读",
+    )
+    declare_zlio_imu_acceleration_scale_cmd = DeclareLaunchArgument(
+        "zlio_imu_acceleration_scale",
+        default_value="1.0",
+        description="IMU 加速度单位换算：输入为 g 时取 9.81（实车），m/s² 时取 1.0（仿真）",
+    )
+    declare_zlio_body_frame_cmd = DeclareLaunchArgument(
+        "zlio_body_frame",
+        default_value="front_mid360",
+        description="里程计 child frame（仿真 front_mid360 / 实车 livox_imu）",
+    )
 
     start_point_lio_node = Node(
         condition=IfCondition(
@@ -239,17 +294,19 @@ def generate_launch_description():
         parameters=[
             {"use_sim_time": use_sim_time},
             {"config_file": zlio_config},
-            {"input_type": "pointcloud2"},
-            {"lidar_topic": "velodyne_points"},
+            {"input_type": zlio_input_type},
+            {"lidar_topic": zlio_lidar_topic},
             # 订饱和保护的输出，不订原始 IMU（守卫与 zlio 同条件起停，见上）。
-            {"imu_topic": "livox/imu_saturated"},
-            {"point_time_field": "time"},
-            {"point_time_scale": 1.0},
-            {"point_time_absolute": False},
-            {"imu_acceleration_scale": 1.0},
+            {"imu_topic": zlio_imu_topic},
+            {"point_time_field": zlio_point_time_field},
+            {"point_time_scale": ParameterValue(zlio_point_time_scale, value_type=float)},
+            {"point_time_absolute": ParameterValue(zlio_point_time_absolute, value_type=bool)},
+            # ⚠ 实车 MID-360 的 linear_acceleration 单位是 **g**（取 9.81），仿真才是 m/s²（取 1.0）。
+            # 抄错的表现是滤波器当场发散（放大 9.81 倍）或加速度被压小 9.81 倍。
+            {"imu_acceleration_scale": ParameterValue(zlio_imu_acceleration_scale, value_type=float)},
             {"publish_tf": False},
             {"world_frame": "odom"},
-            {"body_frame": "front_mid360"},
+            {"body_frame": zlio_body_frame},
             # warm 重置保留速度/倾角/零偏；coordinated_reset 必须 false —— 本链路没有后端，
             # 前端需要自己在输入中断后换代（bridge 的锚定正是为此准备）。
             {"reset_mode": "warm"},
@@ -395,6 +452,14 @@ def generate_launch_description():
     ld.add_action(declare_use_lio_odometry_cmd)
     ld.add_action(declare_odometry_frontend_cmd)
     ld.add_action(declare_zlio_config_cmd)
+    ld.add_action(declare_zlio_input_type_cmd)
+    ld.add_action(declare_zlio_lidar_topic_cmd)
+    ld.add_action(declare_zlio_imu_topic_cmd)
+    ld.add_action(declare_zlio_point_time_field_cmd)
+    ld.add_action(declare_zlio_point_time_scale_cmd)
+    ld.add_action(declare_zlio_point_time_absolute_cmd)
+    ld.add_action(declare_zlio_imu_acceleration_scale_cmd)
+    ld.add_action(declare_zlio_body_frame_cmd)
     ld.add_action(declare_map_to_odom_x_cmd)
     ld.add_action(declare_map_to_odom_y_cmd)
     ld.add_action(declare_map_to_odom_yaw_cmd)

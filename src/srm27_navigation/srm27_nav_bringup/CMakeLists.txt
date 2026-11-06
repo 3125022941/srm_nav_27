@@ -5,6 +5,8 @@ find_package(ament_cmake_auto REQUIRED)
 
 install(PROGRAMS
   scripts/gimbal_spin_gate.py
+  # 实车云台关节角 -> /joint_states 中继（协议补齐回传字段后即可接进 TF）。
+  scripts/gimbal_joint_state_relay.py
   scripts/simulation_ground_truth_odometry.py
   scripts/srm_minco_real_preflight.py
   scripts/srm_regression_metadata.py
@@ -33,8 +35,9 @@ if(BUILD_TESTING)
   # 较新 pluggy 不兼容，会在收集阶段直接失败。
   find_program(SRM27_PYTHON3_EXECUTABLE NAMES python3 REQUIRED)
   find_package(ament_cmake_test REQUIRED)
-  foreach(test_name test_fakeyaw_launch_wiring test_lio_frontend_wiring
-                    test_zlio_bridge_math test_speed_limits)
+  foreach(test_name test_fakeyaw_launch_wiring test_fakeyaw_real_wiring
+                    test_cli_parity test_lio_frontend_wiring test_zlio_bridge_math
+                    test_speed_limits)
     ament_add_test(${test_name}
       GENERATE_RESULT_FOR_RETURN_CODE_ZERO
       COMMAND ${SRM27_PYTHON3_EXECUTABLE}

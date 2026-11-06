@@ -227,7 +227,27 @@ class Recorder(object):
         self.t0 = None
 
         rclpy.init(args=[])  # args=[] 而不是 None：否则自定义命令行开关会被当成 ROS 参数解析
-        self.node = rclpy.create_node("plot_lio_gt_yaw")
+        # ★ 2026-11-06：必须用**仿真时间**。仿真比实时慢（实测 RTF≈0.77），拿墙钟去对
+        #   仿真时间的 stamp，所有"延迟/年龄"都会差 1/RTF 倍（约 30%）。
+        #   先建一个探测节点看有没有 /clock，再按 --sim-time 决定正式节点用哪个时钟。
+        use_sim = self._detect_sim_time(rclpy, args.sim_time)
+        overrides = []
+        if use_sim:
+            # ⚠ 这里要的是 **rclpy.parameter.Parameter**（吃 Python 原生值），
+            # 不是 rcl_interfaces.msg.Parameter（那个只吃 ParameterValue 子消息）——
+            # 两者同名，混用会分别抛 AssertionError / TypeError（都实测过）。
+            from rclpy.parameter import Parameter
+            overrides = [Parameter("use_sim_time", value=True)]
+        self.node = rclpy.create_node("plot_lio_gt_yaw", parameter_overrides=overrides)
+        if use_sim:
+            self.node.get_logger().info(
+                "本工具使用**仿真时间**（use_sim_time=True，来源: %s）"
+                % ("--sim-time on" if args.sim_time == "on" else "检测到 /clock"))
+        elif args.sim_time == "off":
+            self.node.get_logger().info("按 --sim-time off 使用墙钟（仿真在跑时数字会差 1/RTF 倍）")
+        else:
+            self.node.get_logger().warn(
+                "未检测到 /clock：本工具退回墙钟。若仿真在跑，请确认 --sim-time 或 ROS_DOMAIN_ID")
         self.ns = (args.namespace or "").strip("/")
         if not self.ns:
             self.ns = self._autodetect_namespace(rclpy, args.gt_topic)
@@ -253,6 +273,7 @@ class Recorder(object):
         self.bridge = None
         self.matches = None
         self.events = []          # [(t 绝对秒, level, name)]，--zlio 且话题存在时才有
+        self.yaw_debug = None     # (预测 yaw, odom yaw, 积分量) rad
         self.t0_abs = None
         # --zlio 专属：点云点数、话题频率、换代代次（epoch）
         self.scan = None
@@ -275,6 +296,10 @@ class Recorder(object):
         from sensor_msgs.msg import Imu
         self.node.create_subscription(
             Imu, full(args.imu_topic), self._on_imu, 50)
+        if args.yaw_debug_topic:
+            from geometry_msgs.msg import Vector3
+            self.node.create_subscription(
+                Vector3, full(args.yaw_debug_topic), self._on_yaw_debug, 50)
 
         if args.zlio:
             from sensor_msgs.msg import PointCloud2
@@ -306,6 +331,24 @@ class Recorder(object):
             (gt_topic, lio_topic, cmd_topic,
              "时长=一直（Ctrl-C 结束）" if args.duration <= 0.0
              else "时长=%.0f s" % args.duration))
+
+    @staticmethod
+    def _detect_sim_time(rclpy, mode):
+        """判断是否该用仿真时间：mode = auto / on / off。"""
+        if mode == "on":
+            return True
+        if mode == "off":
+            return False
+        probe = rclpy.create_node("plot_lio_gt_yaw_clock_probe")
+        try:
+            deadline = time.time() + 2.0
+            while time.time() < deadline:
+                rclpy.spin_once(probe, timeout_sec=0.1)
+                if "/clock" in dict(probe.get_topic_names_and_types()):
+                    return True
+            return False
+        finally:
+            probe.destroy_node()
 
     def _autodetect_namespace(self, rclpy, topic_leaf):
         """没给 --namespace 时，自动找带命名空间的同名话题（如 /red_standard_robot1/xxx）。
@@ -376,6 +419,10 @@ class Recorder(object):
         if span <= 0.0:
             return float("nan")
         return (len(bucket) - 1) / span
+
+    def _on_yaw_debug(self, msg):
+        """fake_vel_transform 的外推诊断：x=预测 yaw, y=odom yaw, z=积分量。"""
+        self.yaw_debug = (msg.x, msg.y, msg.z)
 
     def _on_gt(self, msg):
         self.gt = msg
@@ -539,6 +586,9 @@ class Recorder(object):
                 epoch=float(self.epoch),
                 epoch_changed=epoch_changed,
                 matches=float(self.matches) if self.matches is not None else float("nan"),
+                pred_yaw=(math.degrees(self.yaw_debug[0]) if self.yaw_debug else float("nan")),
+                yaw_odom_fvt=(math.degrees(self.yaw_debug[1]) if self.yaw_debug else float("nan")),
+                wz_integral=(math.degrees(self.yaw_debug[2]) if self.yaw_debug else float("nan")),
             )
         )
 
@@ -643,6 +693,7 @@ def demo_rows(duration=20.0, rate=20.0, zlio=False):
             epoch=-1.0,
             epoch_changed=0.0,
             matches=float("nan"),
+            pred_yaw=float("nan"), yaw_odom_fvt=float("nan"), wz_integral=float("nan"),
         )
         if zlio:
             # 真值沿 x 走、ZLIO 走 3 倍；再叠上那个 13 cm 小圆（云台杠杆臂）
@@ -712,6 +763,31 @@ def print_stats(rows, events=None, event_origin=None):
     raw_hz = np.array([r.get("raw_hz", np.nan) for r in rows], dtype=float)
     if np.isfinite(off_yaw).any() or np.isfinite(scan_points).any():
         print("---- ZLIO ----")
+    pred_yaw = np.array([r.get("pred_yaw", np.nan) for r in rows], dtype=float)
+    yaw_gt = np.array([r.get("yaw_gt", np.nan) for r in rows], dtype=float)
+    if np.isfinite(pred_yaw).any():
+        mask = np.isfinite(pred_yaw) & np.isfinite(yaw_gt)
+        if mask.sum() > 10:
+            err_pred = np.abs(
+                np.array([wrap_deg(a - b) for a, b in zip(pred_yaw[mask], yaw_gt[mask])]))
+            err_odom = np.abs(
+                np.array([wrap_deg(a - b) for a, b in zip(
+                    np.array([r["yaw_lio"] for r in rows], dtype=float)[mask],
+                    yaw_gt[mask])]))
+            integral = np.array([r.get("wz_integral", np.nan) for r in rows], dtype=float)
+            print("外推 yaw      : |pred-GT| 均值 %.2f° 最大 %.2f°；"
+                  "|odom-GT| 均值 %.2f° 最大 %.2f°"
+                  % (err_pred.mean(), err_pred.max(), err_odom.mean(), err_odom.max()))
+            print("  外推量       : 均值 %.2f°，最大 %.2f°（= ∫wz dt，仿真时间积分）"
+                  % (float(np.nanmean(integral)), float(np.nanmax(np.abs(integral)))))
+            if err_pred.mean() < err_odom.mean():
+                print("  → 外推**有改善**：平均航向误差 %.2f° → %.2f°"
+                      % (err_odom.mean(), err_pred.mean()))
+            else:
+                print("  → 外推**没有改善**（差值 %.2f°）：检查 actuation_delay 标定 / "
+                      "chassis_cmd_vel_topic 是否真的是 mux 输出"
+                      % (err_pred.mean() - err_odom.mean()))
+
     raw_roll = np.array([r.get("raw_roll", np.nan) for r in rows], dtype=float)
     raw_pitch = np.array([r.get("raw_pitch", np.nan) for r in rows], dtype=float)
     bridge_roll = np.array([r.get("bridge_roll", np.nan) for r in rows], dtype=float)
@@ -961,6 +1037,13 @@ def plot(rows, save_path, title_suffix="", headless=False, zlio=False, caption=T
         ry_u = np.degrees(np.unwrap(np.radians(ry[ry_mask])))
         ax.plot(t[ry_mask], ry_u, color="#2ca02c", lw=1.0, alpha=0.8,
                 label="原始 lidar_odometry")
+    # fake_vel_transform 实际用于转换的 yaw（= odom yaw + ∫wz dt，外推到指令生效时刻）。
+    # 它才是"命令真正被旋转时用的那个角"，和真值贴得比 odom yaw 更近就说明外推起效。
+    pred_yaw = np.array([r.get("pred_yaw", np.nan) for r in rows], dtype=float)
+    if np.isfinite(pred_yaw).any():
+        mask = np.isfinite(pred_yaw)
+        ax.plot(t[mask], np.degrees(np.unwrap(np.radians(pred_yaw[mask]))),
+                color="#e377c2", lw=1.4, label="fake_vel_transform 预测 yaw（外推后）")
     ax.set_ylabel("yaw (°)")
     panel_title(
         ax, "① 航向曲线" + title_suffix,
@@ -1203,6 +1286,14 @@ def main(argv=None):
         "--discover-timeout", type=float, default=10.0,
         help="自动找命名空间时最多等多久（秒）。仿真刚起来时话题会分批出现，默认 10 s")
     parser.add_argument("--namespace", default="", help="命名空间，如 red_standard_robot1")
+    parser.add_argument(
+        "--sim-time", choices=("auto", "on", "off"), default="auto",
+        help="用哪个时钟（默认 auto：检测到 /clock 就用仿真时间）。"
+             "仿真比实时慢，用墙钟对仿真时间戳会让所有延迟差 1/RTF 倍")
+    parser.add_argument(
+        "--yaw-debug-topic", default="yaw_debug",
+        help="fake_vel_transform 的外推诊断话题（geometry_msgs/Vector3："
+             "x=预测 yaw, y=odom yaw, z=积分量，单位 rad）。留空则不看")
     parser.add_argument("--demo", action="store_true", help="用合成数据出图（不需要 ROS）")
     parser.add_argument(
         "--no-caption", action="store_true",

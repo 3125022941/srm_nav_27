@@ -69,6 +69,19 @@ def generate_launch_description():
     # 这里只透传，真正的分叉在 localization_launch（起哪个前端 + 要不要 zlio_bridge）
     # 与 navigation_launch（要不要 loam_interface）里。
     odometry_frontend = LaunchConfiguration("odometry_frontend")
+    # ZLIO 的算法配置文件：仿真与实车**不是同一份**（IMU 单位 m/s² vs g、点云点格式
+    # PointCloud2 vs LiDAR CustomMsg、雷达-IMU 外参也不同）。这里只透传，默认值保持
+    # 仿真那份以免改变旧行为；实车入口（nav_srm_real_launch.py）显式传 config/real/ 那份。
+    zlio_config = LaunchConfiguration("zlio_config")
+    # ZLIO 输入接线（话题/单位/帧名）：仿真与实车不同，入口按平台给值，这里只透传。
+    zlio_input_type = LaunchConfiguration("zlio_input_type")
+    zlio_lidar_topic = LaunchConfiguration("zlio_lidar_topic")
+    zlio_imu_topic = LaunchConfiguration("zlio_imu_topic")
+    zlio_point_time_field = LaunchConfiguration("zlio_point_time_field")
+    zlio_point_time_scale = LaunchConfiguration("zlio_point_time_scale")
+    zlio_point_time_absolute = LaunchConfiguration("zlio_point_time_absolute")
+    zlio_imu_acceleration_scale = LaunchConfiguration("zlio_imu_acceleration_scale")
+    zlio_body_frame = LaunchConfiguration("zlio_body_frame")
     map_to_odom_x = LaunchConfiguration("map_to_odom_x")
     map_to_odom_y = LaunchConfiguration("map_to_odom_y")
     map_to_odom_yaw = LaunchConfiguration("map_to_odom_yaw")
@@ -198,6 +211,49 @@ def generate_launch_description():
             "回退方式就是改回 point_lio（方案 §9 的三级回退之一）"
         ),
     )
+    declare_zlio_config_cmd = DeclareLaunchArgument(
+        "zlio_config",
+        default_value=os.path.join(
+            bringup_dir, "config", "simulation", "zlio_mid360.yaml"
+        ),
+        description=(
+            "ZLIO 前端算法配置（IMU 单位/点云格式/雷达-IMU 外参随车不同）："
+            "仿真用 config/simulation，实车用 config/real。只在 odometry_frontend:=zlio 时生效"
+        ),
+    )
+    # ZLIO 输入接线：默认值 = 仿真。实车入口（nav_srm_real_launch.py）会覆盖。
+    declare_zlio_input_type_cmd = DeclareLaunchArgument(
+        "zlio_input_type", default_value="pointcloud2",
+        description="LiDAR 消息格式: pointcloud2（仿真）或 livox（实车 CustomMsg）",
+    )
+    declare_zlio_lidar_topic_cmd = DeclareLaunchArgument(
+        "zlio_lidar_topic", default_value="velodyne_points",
+        description="LiDAR 输入话题（仿真 velodyne_points / 实车 livox/lidar）",
+    )
+    declare_zlio_imu_topic_cmd = DeclareLaunchArgument(
+        "zlio_imu_topic", default_value="livox/imu_saturated",
+        description="IMU 输入话题（默认取饱和保护的输出）",
+    )
+    declare_zlio_point_time_field_cmd = DeclareLaunchArgument(
+        "zlio_point_time_field", default_value="time",
+        description="PointCloud2 逐点时间字段名（livox 输入不使用）",
+    )
+    declare_zlio_point_time_scale_cmd = DeclareLaunchArgument(
+        "zlio_point_time_scale", default_value="1.0",
+        description="逐点时间换算成秒的倍率（纳秒 1e-9 / 秒 1.0）",
+    )
+    declare_zlio_point_time_absolute_cmd = DeclareLaunchArgument(
+        "zlio_point_time_absolute", default_value="False",
+        description="逐点时间是否为绝对时间",
+    )
+    declare_zlio_imu_acceleration_scale_cmd = DeclareLaunchArgument(
+        "zlio_imu_acceleration_scale", default_value="1.0",
+        description="IMU 加速度单位换算：g -> 9.81（实车），m/s² -> 1.0（仿真）",
+    )
+    declare_zlio_body_frame_cmd = DeclareLaunchArgument(
+        "zlio_body_frame", default_value="front_mid360",
+        description="里程计 child frame（仿真 front_mid360 / 实车 livox_imu）",
+    )
     declare_map_to_odom_x_cmd = DeclareLaunchArgument("map_to_odom_x", default_value="0.0")
     declare_map_to_odom_y_cmd = DeclareLaunchArgument("map_to_odom_y", default_value="0.0")
     declare_map_to_odom_yaw_cmd = DeclareLaunchArgument("map_to_odom_yaw", default_value="0.0")
@@ -263,6 +319,15 @@ def generate_launch_description():
                     "use_pcd_localization": use_pcd_localization,
                     "use_lio_odometry": use_lio_odometry,
                     "odometry_frontend": odometry_frontend,
+                    "zlio_config": zlio_config,
+                    "zlio_input_type": zlio_input_type,
+                    "zlio_lidar_topic": zlio_lidar_topic,
+                    "zlio_imu_topic": zlio_imu_topic,
+                    "zlio_point_time_field": zlio_point_time_field,
+                    "zlio_point_time_scale": zlio_point_time_scale,
+                    "zlio_point_time_absolute": zlio_point_time_absolute,
+                    "zlio_imu_acceleration_scale": zlio_imu_acceleration_scale,
+                    "zlio_body_frame": zlio_body_frame,
                     "map_to_odom_x": map_to_odom_x,
                     "map_to_odom_y": map_to_odom_y,
                     "map_to_odom_yaw": map_to_odom_yaw,
@@ -314,6 +379,15 @@ def generate_launch_description():
     ld.add_action(declare_use_pcd_localization_cmd)
     ld.add_action(declare_use_lio_odometry_cmd)
     ld.add_action(declare_odometry_frontend_cmd)
+    ld.add_action(declare_zlio_config_cmd)
+    ld.add_action(declare_zlio_input_type_cmd)
+    ld.add_action(declare_zlio_lidar_topic_cmd)
+    ld.add_action(declare_zlio_imu_topic_cmd)
+    ld.add_action(declare_zlio_point_time_field_cmd)
+    ld.add_action(declare_zlio_point_time_scale_cmd)
+    ld.add_action(declare_zlio_point_time_absolute_cmd)
+    ld.add_action(declare_zlio_imu_acceleration_scale_cmd)
+    ld.add_action(declare_zlio_body_frame_cmd)
     ld.add_action(declare_map_to_odom_x_cmd)
     ld.add_action(declare_map_to_odom_y_cmd)
     ld.add_action(declare_map_to_odom_yaw_cmd)
