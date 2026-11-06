@@ -22,7 +22,8 @@
 #    ⚠ point_lio 的 extrinsic_T 写的是 [0,0,0]（当年忽略了这 3 cm），所以本项与 Point-LIO
 #      的 A/B **不再严格等价**：ZLIO 这边更接近真实几何。要严格 A/B 就临时改回 [0,0,0]。
 #    ⚠ 实车对应值是 [-0.011, -0.02329, 0.04412]（MID-360 的 lidar→IMU），别抄错。
-# 2) sensor.minimum_range / maximum_range 保持 0.5 / 100.0 = point_lio 的 blind 与量程，
+# 2) sensor.minimum_range / maximum_range 保持 0.3 / 100.0 = point_lio 的 blind 与量程
+#    （2026-11-06: 0.5 -> 0.46 -> 0.3，两套前端同值），
 #    同样是为了 A/B 只有一个自变量。
 # 3) initialization.window_frames=20（20 Hz 雷达 → 1.0 s 初始化窗口）、
 #    seed_imu_samples=31（200 Hz 仿真 IMU → 0.155 s）、
@@ -36,8 +37,8 @@
 sensor:
     # 固定重力模长，m/s²。仿真 IMU 输出单位是 m/s²，故 gravity 就是 9.81。
     gravity: 9.81
-    # 有效测距下限，m。= point_lio 的 blind: 0.5。
-    minimum_range: 0.5
+    # 有效测距下限，m。= point_lio 的 blind: 0.3（2026-11-06: 0.5 -> 0.46 -> 0.3，两套前端必须同值）。
+    minimum_range: 0.3
     # 有效测距上限，m。
     maximum_range: 100.0
     # 将雷达坐标转换到 IMU 坐标的刚性外参。

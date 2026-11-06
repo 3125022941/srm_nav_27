@@ -36,8 +36,8 @@
 sensor:
     # 固定重力模长，m/s²。仿真 IMU 输出单位是 m/s²，故 gravity 就是 9.81。
     gravity: 9.81
-    # 有效测距下限，m。= point_lio 的 blind: 0.5。
-    minimum_range: 0.5
+    # 有效测距下限，m。= point_lio 的 blind: 0.3（2026-11-06: 0.5 -> 0.46 -> 0.3，两套前端必须同值）。
+    minimum_range: 0.3
     # 有效测距上限，m。
     maximum_range: 100.0
     # 将雷达坐标转换到 IMU 坐标的刚性外参。

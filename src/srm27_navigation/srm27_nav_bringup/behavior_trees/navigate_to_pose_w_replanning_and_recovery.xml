@@ -2,8 +2,18 @@
 <root BTCPP_format="3"
       main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
+    <!-- 最外层 RecoveryNode 的重试次数（2026-11-06: 10 -> 100）。
+         它是"整条导航流水线失败多少次之后才把 NavigateToPose 判 ABORT"的唯一开关：
+         每一轮重试里已经包含 ComputePathToPose 的 3 次与 FollowPath 的 10 次子重试，
+         所以 100 意味着**几乎不会因为偶发失败而放弃目标** —— 规划失败就清代价地图、
+         FollowPath 失败就清局部图，然后接着试，直到上层显式取消目标（Cancel）为止。
+         ⚠ 副作用（要有意识）：目标若真的不可达，行为树会一直重试、一直做恢复动作
+           （清图 / 脱困），不会再自己返回 ABORT。此时唯一的出口是上层取消目标或
+           `lifecycle_manager` 把它停掉；脚本的 verify-spin 模式与各验收脚本都自己控制超时，不受影响。
+         ⚠ 子节点（ComputePathToPose=3 / FollowPath=10）的数值是 2026-11-04 为了给
+           控制器内部脱困（recovery.window_sec=3 s）留完整窗口定的，别跟着一起放大。 -->
     <RecoveryNode name="NavigateRecovery"
-                  number_of_retries="10">
+                  number_of_retries="100">
       <PipelineSequence name="NavigateWithReplanning">
         <RateController hz="3.0">
           <!-- number_of_retries: 1 -> 3（2026-11-04）。只重试 1 次时，全局规划连失败两次
@@ -44,8 +54,9 @@
                历史: 1.0 m/s 时曾在窄角落连续高速前冲 71 s(2026-09-14 实测),
                于是先降到 0.2 m/s；2026-11-04 又按操作手要求抬到 1.5 m/s
                （与 recovery.escape_speed 对齐, 让步进保持同一节奏）。
-               当前 MINCO 控制器上限 limits.max_linear_speed = 2.20 m/s, 所以 1.5 在此之下;
-               mux 的合速度上限 6.0 m/s 也能过。下面那条 note 说明了速度抬上去之后
+               当前 MINCO 控制器上限 limits.max_linear_speed = 2.60 m/s（2026-11-06 按底盘能力
+               写入）, 所以 1.5 在此之下; mux 的合速度上限 2.60 m/s 也能过。下面那条 note
+               说明了速度抬上去之后
                提前退出会变成什么行为。 -->
           <!-- backup_dist / backup_speed / time_allowance 三个端口**仍然是活的**, 别删:
                2026-11-04 曾以为"提前退出"上线后它们没用了, 其实 back_up_free_space 里
