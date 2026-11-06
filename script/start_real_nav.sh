@@ -1720,6 +1720,8 @@ cat <<'EOF'
   ros2 topic echo /cmd_vel_nav_fake --once                   # 导航请求 (fake 系, 含 wz)
   ros2 topic echo /cmd_vel_nav_body --once                   # fake 转换后 (车体系, wz 应逐条相同)
   ros2 topic echo /cmd_vel_chassis --once                    # mux 输出 = 底盘实际收到的速度
+  ros2 topic echo /chassis_speed --once                       # 底盘**实际**速度反馈 (0x0010)
+  ros2 topic echo /chassis_yaw_deg --once                     # 底盘实际 yaw (度, 0x0010)
   ros2 topic hz /cmd_vel_chassis                             # 应为 200 Hz 左右 (mux 合成频率)
   ros2 run tf2_ros tf2_echo base_link base_link_fake         # fakeyaw TF: yaw 应等于 -底盘 yaw
   ros2 topic echo /srm_cmd_mux/diagnostics --once            # mux 诊断 (钳位/超时计数)

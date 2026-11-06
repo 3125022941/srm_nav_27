@@ -267,7 +267,8 @@ def generate_launch_description():
     # IMU 加速度饱和保护（记录 §5.4）：ZLIO 运行时没有 Point-LIO 的 check_satu/satu_acc，
     # 撞墙那一下的冲量会被原样积分成几十 m/s 的速度，而"正对一面大墙"时激光匹配是退化的
     # （法向可观、切向不可观）救不回来 —— 表现就是航向还准、位置飞出去几千米。
-    # 所以 zlio 前面串一级削顶：livox/imu -> livox/imu_saturated（|a| 限 30 m/s²）。
+    # 所以 zlio 前面串一级保护：livox/imu -> livox/imu_saturated
+    # （|a| > 30 m/s² 时把该帧加速度替换成上一次未饱和值，而不是按比例缩小）。
     # 与 zlio 同条件起停，保证"谁订谁发"永远配对（不存在 zlio 在订一个没人发的话题的情况）。
     start_imu_saturation_guard = Node(
         condition=IfCondition(

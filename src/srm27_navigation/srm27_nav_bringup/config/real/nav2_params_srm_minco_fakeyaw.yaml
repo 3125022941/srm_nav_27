@@ -1169,14 +1169,18 @@ zlio_bridge:
     planarize_pose: False
     reject_implausible_jump: False
 
-# 与 zlio 同条件起停：把 livox/imu 削顶后再喂给前端。
+# 与 zlio 同条件起停：|a| 超阈值的帧，加速度**替换成上一次未饱和的值**后再喂给前端
+# （不是按比例缩小：缩过的值是物理上不存在的持续高加速度，照样会被积分进速度）。
 # ⚠ 单位跟着**话题的原始单位**走：实车 MID-360 输出 g（不是 m/s²），
-#   所以这里是 3.0（约 3 g）；仿真是 m/s²，那份写 30.0。抄错会让限幅形同虚设或全被削平。
+#   所以这里填 3.0（约 3 g）；仿真是 m/s²，那份填 30.0。抄错会让保护形同虚设。
 imu_saturation_guard:
   ros__parameters:
     use_sim_time: False
     input_topic: "livox/imu"
     output_topic: "livox/imu_saturated"
-    max_acceleration: 3.0
+    max_acceleration: 3.0            # 约 3 g；正常行驶远低于它，撞击才会到
+    # 持续饱和超过这么久就放弃"替换"、恢复原样透传：碰撞不会持续 0.5 s，
+    # 更可能是传感器/链路异常，不能靠"假装没有加速度"把故障掩盖过去。
+    max_hold_sec: 0.5
     warn_throttle_sec: 2.0
     report_interval_sec: 10.0

@@ -335,7 +335,7 @@ cloud = point_cloud2.create_cloud(header, [x, y, z, intensity], points)   # 全 
 
 | 手段 | 做法 | 代价/风险 |
 |---|---|---|
-| **IMU 饱和保护** ✅ **已实施**（2026-11-05） | `scripts/imu_saturation_guard.py`：`livox/imu` → `livox/imu_saturated`，`|a|` 限 30 m/s²（= Point-LIO 的 `satu_acc`），方向不变只缩模长，超限 WARN + 周期汇报；`zlio` 的 `imu_topic` 已改订过滤后的话题，两者**同条件起停**（不会出现"订了没人发的话题"）。参数在 `imu_saturation_guard:` 段 | 会给撞击后的速度"少算"，需要靠点云拉回来；正常行驶（< 5 m/s²）完全不受影响。对照实验：把 `max_acceleration` 调大（如 1e6）即等于"只转发不削顶" |
+| **IMU 饱和保护** ✅ **已实施**（2026-11-05，2026-11-06 改策略） | `scripts/imu_saturation_guard.py`：`livox/imu` → `livox/imu_saturated`。`|a|` 超 30 m/s²（= Point-LIO 的 `satu_acc`）时，**该帧加速度替换成上一次未饱和的值**（不是按比例缩到 30，理由见下）；`zlio` 的 `imu_topic` 已改订过滤后的话题，两者**同条件起停**。参数在 `imu_saturation_guard:` 段 | 注入误差只剩真实碰撞的速度变化（0.2 m/s 撞停 / 实车 1~2 m/s），激光能修回来；正常行驶（< 5 m/s²）完全不受影响。对照实验：`max_acceleration` 调大（如 1e6）= 关掉保护 |
 | 换代改为冷启动 | `zlio_bridge` 的 launch 参数 `reset_mode: cold` | 换代时丢掉被污染的速度/零偏；但位置错位仍由锚定保留 |
 | 撞击后就地重启定位 | `kill_nav.sh` 后只重起导航标签页（Gazebo 不用重起） | 人工介入 |
 | 临时换回 Point-LIO | `--lio-frontend point_lio` | 它有 `check_satu`/`satu_acc`，抗撞击好一些；但就不是在验 ZLIO 了 |
@@ -400,6 +400,42 @@ self.t_off  = mount * raw.inverse()     # ★ 抵消 ZLIO 世界系的 R_0
 **这次没解释的部分**：倾斜最多解释 ±4° 量级的航向误差与方向相关的尺度误差；2100/2102
 后半段 -10°~-30° 的航向误差、-6 m/s 的速度、matches 下降，是另一个问题（疑似高角速度下
 ZLIO 发散 / 陀螺饱和 / 去畸变），必须等倾斜修掉、基线干净之后再单独看。
+
+### 5.5b IMU 饱和处理改成"用上一帧未饱和值替换"（2026-11-06）
+
+最初的实现是"按比例缩到 30 m/s²"。**改掉**，理由是它把真实碰撞的冲量**摊平成一个持续的高
+加速度**：滤波器照样把这段积分进速度里（只是慢一点），而且缩过的值在物理上根本不存在。
+
+现在的做法：饱和帧的 `linear_acceleration` **替换成上一次未饱和的采样值**
+（stamp/角速度/朝向/协方差全部原样透传）。语义是"这一帧加速度计不可信，当它没发生" ——
+滤波器按"没有冲击"继续外推，注入的误差只剩**真实碰撞的速度变化**（0.2 m/s 撞停；
+实车 1~2 m/s），这个量级激光匹配完全能拉回来。这也是 Point-LIO `check_satu` 的思路：
+饱和的那一帧**不信任**，而不是给它编一个折中值。
+
+两个必须显式处理的边界：
+
+| 边界 | 行为 |
+|---|---|
+| **首帧就饱和**（还没有未饱和参考值） | 原样透传 + 计数（不猜）；日志 `还没有可替换的参考值` |
+| **连续饱和 > `max_hold_sec`**（默认 0.5 s，远超任何碰撞） | 放弃替换、恢复原样透传 + 告警：这么久说明是传感器/链路异常，不能靠"假装没加速度"掩盖 |
+
+被替换过的帧**不会**污染参考值；一帧未饱和就更新参考并清掉"超时"状态。
+告警按事件类型分别节流（`replaced` / `no_reference` / `hold_expired`）—— 否则"替换"的告警
+会占满节流窗口，把最该被看见的"放弃替换"吞掉（实测踩到）。
+
+**验证**（`.sim_run/test_imu_guard.py`，起真实节点，11 项全过）：
+
+| 用例 | 结果 |
+|---|---|
+| 正常帧原样通过并成为参考 | `(0.5,0.2,9.81)` ✅ |
+| 饱和帧（150 m/s²）→ 参考值 | `(0.40,0.30,9.80)` ✅（且明确不是 30.0）|
+| 连续 3 帧饱和 → 同一参考值 | ✅（被替换的帧不污染参考）|
+| 恢复帧更新参考 → 后续饱和帧用新参考 | ✅ |
+| 持续饱和 0.63 s > `max_hold_sec` | 恢复原样透传 `x=300.0` + 告警 ✅ |
+| 首帧饱和（无参考） | 原样透传 `180.0` ✅ |
+| stamp / frame_id / 角速度 | 原样透传且严格递增 ✅ |
+
+---
 
 ### 5.6 `scan_period` 改回 0（与仓库其它三份参数文件对齐）
 
@@ -704,7 +740,7 @@ rviz2   # 或用 ros2 topic pub / action 发目标
 |---|---|
 | `.sim_run/check_launch_wiring.py` | 构造 4 个 launch 文件并对每条 `condition` 求值，断言"哪个节点会被起"（17 项） |
 | `.sim_run/test_zlio_bridge.py` | 自己发 TF + `FrontendFrame`，验证 `T_off`、位姿复合、点云变换、换代锚定、丢弃规则、session 失败上报（16 项） |
-| `.sim_run/test_imu_guard.py` | 起真实 `imu_saturation_guard` 节点，验证削顶/透传/告警（7 项） |
+| `.sim_run/test_imu_guard.py` | 起真实 `imu_saturation_guard` 节点，验证"用上一帧替换"/无参考/超时透传/告警（11 项） |
 | `.sim_run/run_check.sh` / `run_bridge_test.sh` / `run_imu_guard_test.sh` | 上面几个的干净环境包装（unset 掉其它工作区的 AMENT/COLCON 前缀，`ROS_DOMAIN_ID=77`，日志写进 `.sim_run/ros_home`） |
 
 长期回归只看包内那个测试：

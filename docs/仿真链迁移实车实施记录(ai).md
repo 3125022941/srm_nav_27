@@ -75,6 +75,17 @@
 | `script/kill_nav.sh` | 入口匹配加入 `nav_srm_real_launch`；孤儿兜底加入 `cmd_mux` / `fake_vel_transform_node` / `zlio*` / `imu_saturation_guard` / `gimbal_joint_state_relay` |
 | `test/test_speed_limits.py` / `test/test_lio_frontend_wiring.py` | 覆盖 `@fakeyaw` 叠加与 profile 判定；ZLIO 参数改为求值替换后断言 |
 | `test/test_cli_parity.py` | 守住"仿真脚本的每个参数实车都能解析"（含 `--gicp`/`--init-pose` 的语义映射与实车专有参数不被误删） |
+
+### 3.3 下位机反馈（0x0010 底盘速度包，2026-11-06）
+
+| 文件 | 改动 |
+| --- | --- |
+| `srm27_nav_protocol/include/packet_typedef.hpp` | `ID_CHASSIS_SPEED = 0x0010`、`ReceiveChassisSpeedData`（25 B，`static_assert` 钉死帧长与数据段偏移） |
+| `srm27_nav_protocol/src/srm27_nav_protocol.cpp` | 按 `cmd_id` 分派新增 `0x0010`；长度自检、`NaN/Inf` 丢弃、失联/恢复告警；发布 `/chassis_speed`（`TwistStamped`）与 `/chassis_yaw_deg`（`Float32`，度） |
+| `srm27_nav_protocol/config/srm27_nav_protocol.yaml` | 新增 `publish_chassis_speed` / `chassis_speed_topic` / `chassis_yaw_topic` / `chassis_speed_frame` / `chassis_speed_timeout_sec` |
+| `script/test_chassis_speed_feedback.py` | 反馈帧工具：`--self-test`（CRC/帧长自检）、`--device`（只读监听统计）、`--pty`（无硬件时造伪串口喂帧，端到端验证 ROS 节点） |
+| `srm27_nav_protocol/test/test_feedback_protocol.py` | 协议级回归：CRC 参考向量、CRC16 覆盖 `cmd_id`、轮转 + 槽位跳过、坏帧恢复、断帧、长度自检、`seq` 回绕 |
+| `docs/导航通信协议-下位机接口说明.md` | §4.2 补 `0x0010`；新增 §4.3（10 ms 槽位轮转 / 必须按 `cmd_id` 分派）与 §4.4（上位机实现状态与话题）；示例帧与速查表同步 |
 | `CMakeLists.txt` | 安装 `gimbal_joint_state_relay.py`；注册 `test_fakeyaw_real_wiring` |
 
 ---
@@ -174,6 +185,19 @@ profile 判定**看内容不看文件名**（`FollowPath.fake_base_frame` 或
   的 yaw 界也是 1.5 rad/s —— **首跑刻意压低**，验过再抬；
 * `--chassis-spin` 默认请求 2.0 rad/s，会被上面两层钳到 1.5，属刻意行为；
 * 首跑请**架起车辆**（轮子离地）或用 `--chassis-spin 0.3` 这种小转速先确认方向。
+
+**反馈通道（2026-11-06 新增）**：下位机 `0x0010` 速度包现在被解析成
+`/chassis_speed`（`TwistStamped`：`linear.x=vx`、`linear.y=vy`、`angular.z=wz`）与
+`/chassis_yaw_deg`（`Float32`，度）。标定时**不需要再靠人眼看车**：
+
+```bash
+ros2 topic echo /cmd_vel_chassis   # 指令 wz（mux 钳位后）
+ros2 topic echo /chassis_speed     # 实际 vx/vy/wz（底盘速度观测器的融合结果）
+ros2 topic echo /chassis_yaw_deg   # 实际 yaw（度）: 恒速自转 30 s 应变化 ≈ wz×30×57.3
+```
+
+口径提醒：`0x0010` 填的是**融合结果** `speed->fused`（底盘系），不是轮速正解，
+也不是"指令已执行"的回显；指令→观测有延迟与尺度差，对账时要一起算。
 
 ### 5.2 云台关节角没有回传（真正的缺口）
 
@@ -352,6 +376,9 @@ ros2 topic echo /cmd_vel_chassis --once      # wz 相同，且不超过 mux.wz_m
 | 起整条入口（`autostart=false`、无硬件） | 启动日志打印迁移链；`srm_cmd_mux` 拿到 `wz_max=1.5 / v_max=4.5 / nav_topic=cmd_vel_nav_body / output_topic=cmd_vel_chassis`；`fake_vel_transform` 进入 `nav_se2`、`odom_timeout=0.6`、外推关闭 |
 | 向 `/cmd_vel_nav_body` 发 `wz=3.0` | mux 日志：`导航 wz 被限幅到 1.500 rad/s`；停发 0.3 s 后：`超过 0.300 s 未收到导航速度，平移与 wz 均已清零` |
 | 云台中继 | 发 `/gimbal_joint_angle=0.7`（Float32）→ `/joint_states` 输出 `name=[gimbal_yaw_joint], position=[0.7]` |
+| 0x0010 反馈（pty 端到端） | 喂 `vx=0.4 / vy=-0.1 / wz=0.75 / yaw=45°` → `/chassis_speed` 解出同值且 `frame_id=base_link`，`/chassis_yaw_deg=45.0`；`data_length=12` 的伪帧被丢弃并告警 |
+| 0x0010 异常路径 | `NaN` 帧不发布（只计数）；停发 0.5 s 出现"中断超过"告警，恢复后再发出现"恢复"日志 |
+| 协议回归 | `test_feedback_protocol` 8/8 通过（含"改 `cmd_id` 必须让 CRC16 失败"的反证、轮转中丢槽后仍逐帧正确） |
 | `test_fakeyaw_real_wiring` | 7/7 通过（默认链路、话题对接、参考系统一、ZLIO 接线、yaw_mode 注入、mux 出口校验、旧链拒绝、中继可选） |
 | `test_speed_limits` | 15/15 通过（含 `@fakeyaw` 叠加、profile 按内容判定、mux 只在迁移链算一层） |
 | `test_fakeyaw_launch_wiring` / `test_lio_frontend_wiring` / `test_zlio_bridge_math` | 全部通过 |

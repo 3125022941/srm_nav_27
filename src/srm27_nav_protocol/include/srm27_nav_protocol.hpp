@@ -23,6 +23,8 @@
 #include <chrono>
 
 #include <geometry_msgs/msg/twist.hpp>
+#include <geometry_msgs/msg/twist_stamped.hpp>
+#include <std_msgs/msg/float32.hpp>
 #include <rm_decision_interfaces/msg/event_data.hpp>
 #include <rm_decision_interfaces/msg/game_robot_hp.hpp>
 #include <rm_decision_interfaces/msg/game_status.hpp>
@@ -70,6 +72,11 @@ private:
   rclcpp::Publisher<rm_decision_interfaces::msg::ProjectileAllowance>::SharedPtr projectile_allowance_pub_; // 0x0208
   rclcpp::Publisher<rm_decision_interfaces::msg::SwitchPosition>::SharedPtr switch_position_pub_;         // 0x000D
   rclcpp::Publisher<rm_decision_interfaces::msg::Sefdefined>::SharedPtr sefdefined_pub_;            // 0x000B
+  // 0x0010 底盘速度反馈（下位机速度观测器的融合结果）。
+  // 速度用 TwistStamped（带 stamp + frame_id，便于和 /cmd_vel_chassis 对时/对账）；
+  // yaw 单独一条 Float32，保持下位机口径（度），不做隐式单位换算。
+  rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr chassis_speed_pub_;
+  rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr chassis_yaw_pub_;
 
   // Subscribe
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_sub_;
@@ -104,6 +111,21 @@ private:
   double angular_velocity_scale_{1.0};
   bool debug_print_hex_{false};
 
+  /******** 接收侧 0x0010 底盘速度反馈 ********/
+  bool publish_chassis_speed_{true};
+  std::string chassis_speed_topic_{"chassis_speed"};
+  std::string chassis_yaw_topic_{"chassis_yaw_deg"};
+  std::string chassis_speed_frame_{"base_link"};
+  // 超过这么久没收到 0x0010 就告警一次（收到后恢复也告警一次）。
+  // 0x0010 约 33 Hz（10 ms 槽位轮转），0.5 s 相当于连丢 ~16 个槽位。
+  double chassis_speed_timeout_sec_{0.5};
+  // 只在接收线程写；watchdog 定时器只读。
+  std::atomic<uint64_t> chassis_speed_count_{0};
+  std::atomic<uint64_t> chassis_speed_bad_length_{0};
+  std::atomic<uint64_t> chassis_speed_nonfinite_{0};
+  std::atomic<int64_t> chassis_speed_last_steady_ns_{0};
+  bool chassis_speed_stale_{true};   // 起机时按"还没有数据"处理
+
   // 限流日志用的状态翻转标志
   bool watchdog_active_{false};
   bool clamping_active_{false};
@@ -136,11 +158,15 @@ private:
   void publishProjectileAllowance(ReceiveProjectileAllowance & data); // 0x0208
   void publishSwitchPosition(ReceiveSwitchPosition & data);  // 0x000D
   void publishSefdefined(ReceiveSefdefinedData & data);     // 0x000B
+  void publishChassisSpeed(ReceiveChassisSpeedData & data); // 0x0010
   // 移除了 publishDebugData, publishImuData, publishRobotInfo, publishRobotMotion, publishJointState
 
   // Callbacks
   void CmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg);
   // 移除了 RobotControlCallback (is_recovering 在标准 19 字节帧里没有位置)
+
+  // 0x0010 失联/恢复检测（由 sendData 线程按 1 s 周期调用）
+  void checkChassisSpeedFreshness();
 
   // debug (ID 类型修正为 uint16_t 以匹配 2 字节 ID)
   void printHex(const std::string& tag, uint16_t id, const std::vector<uint8_t>& data);

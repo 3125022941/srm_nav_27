@@ -55,6 +55,25 @@
     # 角速度同理(原值 0.8, 本轮一并改回 1.0)。
     angular_velocity_scale: 1.0
 
+    # ---- 接收侧: 0x0010 底盘速度反馈 ----
+    # 下位机 → 上位机方向按 cmd_id 多包复用（0x0001 / 0x000B / 0x0010 轮转），
+    # 本节点目前只解析 0x0010（速度与 yaw），另外两包是裁判系统数据，**本车没有
+    # 调用 RefereeInit()，它们实际恒为全 0**，解析了也没有意义。
+    #
+    # 0x0010 = 4 个 float32: vx(m/s)、vy(m/s)、wz(rad/s)、yaw(度)，
+    # 填充的是**底盘速度观测器的融合结果**（不是轮速正解），坐标系是底盘系
+    # （+x 前、+y 左、+z 上、+wz 俯视逆时针）。
+    #
+    # 这是**观测值**，不是"指令已执行"的回显：指令→底盘→观测有延迟和尺度差。
+    # 用途: 速度反馈、指令/实际对账、wz 符号与增益标定、示波。
+    publish_chassis_speed: true
+    chassis_speed_topic: "chassis_speed"        # TwistStamped: linear.x=vx, linear.y=vy, angular.z=wz
+    chassis_yaw_topic: "chassis_yaw_deg"        # Float32: 下位机口径的 yaw（**度**，不转弧度）
+    chassis_speed_frame: "base_link"            # TwistStamped.header.frame_id
+    # 失联告警门限（秒）。0x0010 约 33.3 Hz（10 ms 槽位轮转），0.5 s ≈ 连丢 16 个槽位。
+    # 只影响日志，不影响控制链: 速度反馈断了照样可以导航。
+    chassis_speed_timeout_sec: 0.5
+
     # ---- 诊断开关 ----
     # 打开后终端会打印收发两端的原始 hex:
     #   RECV ...  <- 从下位机收到的整包 (一条都不出现说明底盘完全没回传)

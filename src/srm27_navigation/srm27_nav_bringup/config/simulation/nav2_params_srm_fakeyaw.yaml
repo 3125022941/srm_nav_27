@@ -254,10 +254,15 @@ zlio_bridge:
     # 这样"第几秒开始坏的"是确定的，不用从节流日志里猜。
     events_topic: "zlio_bridge/events"
 
-# IMU 加速度饱和保护（方案 §5.4 的缓解措施）：把 |a| 削到上限再喂给 ZLIO。
-# 只在 --lio + odometry_frontend=zlio 时启动；Point-LIO 前端不经过它（它自己有
-# check_satu + satu_acc: 30.0）。把 max_acceleration 设成很大（如 1e6）等于关掉削顶，
-# 但节点仍会转发（可以作为 A/B 的"只转发不削顶"对照）。
+# IMU 加速度饱和保护（实施记录 §5.4）：|a| 超阈值时，该帧加速度**替换成上一次未饱和的值**，
+# 再喂给 ZLIO。只在 --lio + odometry_frontend=zlio 时启动；Point-LIO 前端不经过它
+# （它自己有 check_satu + satu_acc: 30.0，思路相同：饱和的那一帧不信任）。
+#
+# 为什么不是"按比例缩到 30"：缩是把它摊平成一个持续的高加速度，滤波器照样积分进速度里，
+# 而且缩过的值物理上不存在。替换成上一帧等于"这一帧加速度计不可信、当它没发生"，
+# 注入的误差只剩真实碰撞的速度变化（0.2 m/s 撞停 / 实车 1~2 m/s），激光能修回来。
+#
+# 把 max_acceleration 设成很大（如 1e6）等于关掉保护，但节点仍会转发（可做 A/B 对照）。
 imu_saturation_guard:
   ros__parameters:
     use_sim_time: True
@@ -265,6 +270,9 @@ imu_saturation_guard:
     output_topic: "livox/imu_saturated"
     # 与 point_lio 的 satu_acc 对齐：正常行驶 < 5 m/s²，撞击时可达上百 —— 30 只拦撞击。
     max_acceleration: 30.0
+    # 持续饱和超过这么久就放弃替换、恢复原样透传：碰撞不会持续 0.5 s，
+    # 更可能是传感器/链路异常，不能靠"假装没加速度"掩盖过去。
+    max_hold_sec: 0.5
     warn_throttle_sec: 2.0
     report_interval_sec: 10.0
 

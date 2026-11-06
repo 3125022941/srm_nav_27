@@ -27,6 +27,7 @@ const uint16_t ID_GROUND_ROBOT_POSITION = 0x020B;  // 地面机器人位置数�
 const uint16_t ID_SWITCH_POSITION = 0x000D;        // 打前哨战与否标志位
 const uint16_t ID_SEFDEFINED = 0x000B;             // 新定义的0x0B数据包
 const uint16_t ID_ROBOT_STATUS_V1 = 0x0201;        // 机器人状态数据 (兼容 ID 0x0201)
+const uint16_t ID_CHASSIS_SPEED = 0x0010;          // 底盘速度反馈（融合结果 speed->fused）
 
 // Send ID
 // 0x0302: 自定义控制器与机器人交互数据
@@ -210,6 +211,40 @@ struct ReceiveSefdefinedData
 
   uint16_t crc;
 } __attribute__((packed));
+
+// 0x0010 底盘速度反馈（下位机速度观测器的**融合结果** speed->fused）
+//
+// 语义（下位机口径，别自己重新解释）:
+//   * 底盘系: +x 向前, +y 向左, +z 向上, +wz 俯视逆时针为正；
+//   * vx / vy 单位 m/s，wz 单位 rad/s，**yaw 单位是度**（不是弧度）；
+//   * 这是**观测值**，不是"指令已执行"的回显：指令 → 底盘 → 观测存在延迟与尺度差，
+//     拿它当"下位机收到了我的速度"的证据会误判。它的用途是反馈/对账/标定。
+//   * 该包与 0x0001 / 0x000B 按 10 ms 槽位轮转（各约 33.3 Hz），按 cmd_id 分派，
+//     不能按"第几个包"解析；槽位被跳过的轮次该包直接丢失（不是重发）。
+constexpr uint16_t DATA_LENGTH_CHASSIS_SPEED = 16;
+
+struct ReceiveChassisSpeedData
+{
+  HeaderFrame frame_header;
+  uint16_t cmd_id;
+
+  struct
+  {
+    float vx;       // m/s, 底盘系 +x 向前
+    float vy;       // m/s, 底盘系 +y 向左
+    float wz;       // rad/s, 俯视逆时针为正
+    float yaw_deg;  // 度（下位机速度观测器给出的底盘 yaw）
+  } __attribute__((packed)) data;
+
+  uint16_t crc;
+} __attribute__((packed));
+
+static_assert(
+  sizeof(ReceiveChassisSpeedData) == 9 + DATA_LENGTH_CHASSIS_SPEED,
+  "ReceiveChassisSpeedData 必须严格 25 字节: 帧头 5 + cmd_id 2 + 数据 16 + CRC16 2。");
+static_assert(
+  offsetof(ReceiveChassisSpeedData, data) == 7,
+  "0x0010 的数据段必须紧跟在 cmd_id 之后（协议 §4.1: 帧头 5 + cmd_id 2）。");
 
 /********************************************************/
 /* Send data                                            */
