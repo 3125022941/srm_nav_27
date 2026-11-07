@@ -587,12 +587,16 @@ smoother_server:
       # corridor 失败（OSQP 不收敛，408 ms）。输出几何一致，取最快且稳的 path。
       # 注意：加密关闭（path_resample_step: 0）时 path/corridor 都会失败。
       backend: "path"                                     # path | close | corridor
-      collision_iter: 2                                   # 碰撞检测迭代次数
+      collision_iter: 6                                   # 碰撞检测迭代次数
       norm_time: true                                     # 段内归一化时间
-      max_corridor_range: 10.0                                   # 走廊最大扩张范围（米），过大会溢出
+      max_corridor_range: 2.5                             # 走廊最大扩张范围（米）；上游默认 2.5
       corridor_shrink: 0.0                                # 走廊收缩（米）
-      max_speed: 50.0                                     # 仅影响时间分配，上游建议>40
-      max_acc: 20.0                                       # 仅影响时间分配，上游建议>10
+      # max_speed / max_acc 只参与多项式的时间分配，不影响最大速度硬约束。
+      # 取上游 README 的 3.0 / 1.0：与 50 / 20 都能解出路径，但上游值更平顺
+      # （同路径最大曲率 5.64 vs 5.96 rad/m），代价是平滑 45 ms vs 26 ms，
+      # 仍在 3 Hz（333 ms）预算内。要更快可改回 50 / 20。
+      max_speed: 3.0                                      # 时间分配用最大速度（m/s）
+      max_acc: 1.0                                        # 时间分配用最大加速度（m/s²）
       # 平滑前按该步长线性加密：稀疏路径（YAstar 段长可达 5.7 m）会让样条在拐角
       # 切进膨胀层，check_for_collisions=true 时必然失败并原样返回。0 表示不加密。
       path_resample_step: 0.30                            # 加密步长（米），0 = 关闭
