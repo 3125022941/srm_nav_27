@@ -209,6 +209,20 @@ YAstar 的路径点少 54 倍、规划快约 2 倍；TDT 平滑器把 6 m 的稀
 两者都能解，上游值轨迹更平顺。现默认值已回退到 **3.0 / 1.0**，代价是平滑
 35 ms（原 26 ms），仍在 3 Hz（333 ms）预算内；要更快可改回 50/20。
 
+### 上游接口的接入取舍（2026-11-07 复核）
+
+上游提供的接口并非都要接，逐个说明理由，避免"看起来全移植了"的误读：
+
+| 上游接口 | 状态 | 理由 |
+| --- | --- | --- |
+| `YAstar::search` / `setCostField` / `findSavePoint` | ✅ 已接 | 主规划链路 |
+| `MinimumSnap::solve` + `setMap/setOrder/setMaxDx/setTL` | ✅ 已接 | 主平滑链路 |
+| `setInitVel` | ✅ 已接（开关 `init_vel_from_odom`）| 实车换目标时避免横向加速度突变；默认关闭以免改变既有行为 |
+| `setItems`（途经点速度/走廊） | ❌ 不接 | **Nav2 的 SmoothPath 只传位姿，没有速度信息**；没有速度源时逐点约束只能全填默认值，等于没接。真正有意义的只有起点速度，已由 `setInitVel` 覆盖 |
+| `lineInObsticle` | ❌ 不接 | 仅用于测试断言，规划链路不调用 |
+| `setCostWeight` | ❌ 不接 | 用库内默认权重；调它属于调参，不是移植缺口 |
+| `KinodynamicAstar` | ❌ 不编译 | 上游自述全局搜索约 2 s，`planner_server` 的 1 s 超时下必然失败；等有"离线/低频重规划"需求时再评估 |
+
 ### 闭环验证：行为树必须补 SmoothPath（2026-11-05 追加）
 
 原 `navigate_to_pose_w_replanning_and_recovery.xml` 是「ComputePathToPose → FollowPath」
