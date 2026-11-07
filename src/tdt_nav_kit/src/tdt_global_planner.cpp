@@ -7,6 +7,7 @@
 #include <cmath>
 #include <vector>
 
+#include "nav2_costmap_2d/costmap_2d.hpp"
 #include "nav2_core/exceptions.hpp"
 #include "nav2_util/node_utils.hpp"
 #include "pluginlib/class_list_macros.hpp"
@@ -16,6 +17,7 @@ using nav2_util::declare_parameter_if_not_declared;
 
 namespace tdt_nav_kit
 {
+
 namespace
 {
 
@@ -120,6 +122,8 @@ void TdtGlobalPlanner::configure(
     rclcpp::ParameterValue(static_cast<double>(save_point_max_radius_)));
   declare_parameter_if_not_declared(
     node, plugin_name_ + ".orientation_mode", rclcpp::ParameterValue(orientation_mode_));
+  declare_parameter_if_not_declared(
+    node, plugin_name_ + ".debug_timing", rclcpp::ParameterValue(debug_timing_));
 
   converter_cfg_.occupancy_threshold =
     node->get_parameter(plugin_name_ + ".occupancy_threshold").as_int();
@@ -135,6 +139,7 @@ void TdtGlobalPlanner::configure(
     node->get_parameter(plugin_name_ + ".save_point_max_radius").as_double());
   orientation_mode_ =
     node->get_parameter(plugin_name_ + ".orientation_mode").as_string();
+  debug_timing_ = node->get_parameter(plugin_name_ + ".debug_timing").as_bool();
 
   if (mask_num_layers_ < 1) {
     throw nav2_core::PlannerException("TdtGlobalPlanner: mask_num_layers must be >= 1");
@@ -174,6 +179,9 @@ nav_msgs::msg::Path TdtGlobalPlanner::createPlan(
     throw nav2_core::PlannerException("TdtGlobalPlanner: lifecycle node expired");
   }
 
+  const auto t_begin = clock_->now();
+  double setup_ms = 0.0, search_ms = 0.0;
+
   // 6 参 setMap 的签名要求非常量 std::vector<int8_t>&，故 snap 不能是 const。
   CostmapSnapshot snap = makeSnapshot(costmap_ros_.get(), converter_cfg_);
 
@@ -194,8 +202,18 @@ nav_msgs::msg::Path TdtGlobalPlanner::createPlan(
     snapToSafe(planner, map_img, start.pose.position, save_point_max_radius_);
   const Eigen::Vector2f g =
     snapToSafe(planner, map_img, goal.pose.position, save_point_max_radius_);
+  setup_ms = (clock_->now() - t_begin).seconds() * 1000.0;
+  const auto t_search = clock_->now();
 
   std::vector<Eigen::Vector2f> path = planner.search(s, g);
+  search_ms = (clock_->now() - t_search).seconds() * 1000.0;
+
+  if (debug_timing_) {
+    RCLCPP_INFO(
+      node->get_logger(),
+      "TdtGlobalPlanner 计时: 转换+初始化=%.2f 吸附+搜索=%.2f 总=%.2f ms",
+      setup_ms, search_ms, (clock_->now() - t_begin).seconds() * 1000.0);
+  }
 
   // Humble 的 createPlan 没有 cancel_checker 参数，取消由 planner_server 在
   // 动作层处理；这里不做主动取消检查。

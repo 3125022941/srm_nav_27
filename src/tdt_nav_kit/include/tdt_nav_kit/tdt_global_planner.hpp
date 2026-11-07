@@ -65,6 +65,9 @@ private:
   float save_point_max_radius_{20.0f};
   /// "identity"（默认 w=1）或 "tangent"（由相邻路径点求 yaw）。
   std::string orientation_mode_{"identity"};
+
+  /// 打开后在每次 createPlan 末尾打印分段耗时，用于定位瓶颈（默认关闭）。
+  bool debug_timing_{false};
 };
 
 }  // namespace tdt_nav_kit
