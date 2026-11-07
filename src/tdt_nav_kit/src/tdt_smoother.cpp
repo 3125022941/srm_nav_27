@@ -1,6 +1,9 @@
 // Copyright 2026 SRM27 Navigation Team
 // Licensed under the Apache License, Version 2.0.
 
+#include <tf2/utils.h>
+#include <tf2/time.h>
+
 #include "tdt_nav_kit/path_utils.hpp"
 #include "tdt_nav_kit/tdt_smoother.hpp"
 
@@ -152,6 +155,12 @@ void TdtSmoother::configure(
   declare_parameter_if_not_declared(
     node, p + "corner_round_sample_step", rclcpp::ParameterValue(corner_round_sample_step_));
   declare_parameter_if_not_declared(
+    node, p + "init_vel_from_odom", rclcpp::ParameterValue(init_vel_from_odom_));
+  declare_parameter_if_not_declared(
+    node, p + "odom_topic", rclcpp::ParameterValue(odom_topic_));
+  declare_parameter_if_not_declared(
+    node, p + "init_vel_max_age", rclcpp::ParameterValue(init_vel_max_age_));
+  declare_parameter_if_not_declared(
     node, p + "orientation_mode", rclcpp::ParameterValue(orientation_mode_));
 
   converter_cfg_.occupancy_threshold =
@@ -180,6 +189,20 @@ void TdtSmoother::configure(
     static_cast<float>(node->get_parameter(p + "corner_round_min_turn_deg").as_double());
   corner_round_sample_step_ =
     static_cast<float>(node->get_parameter(p + "corner_round_sample_step").as_double());
+  init_vel_from_odom_ = node->get_parameter(p + "init_vel_from_odom").as_bool();
+  odom_topic_ = node->get_parameter(p + "odom_topic").as_string();
+  init_vel_max_age_ = node->get_parameter(p + "init_vel_max_age").as_double();
+
+  if (init_vel_from_odom_) {
+    odom_sub_ = node->create_subscription<nav_msgs::msg::Odometry>(
+      odom_topic_, rclcpp::QoS(10),
+      [this](const nav_msgs::msg::Odometry::SharedPtr msg) {onOdom(*msg);});
+    RCLCPP_INFO(
+      node->get_logger(), "TdtSmoother: 起点速度取自 %s（有效窗口 %.2f s）",
+      odom_topic_.c_str(), init_vel_max_age_);
+  } else {
+    odom_sub_.reset();
+  }
   orientation_mode_ = node->get_parameter(p + "orientation_mode").as_string();
 
   // 配置自检：backend 与路径加密是强耦合的，只改一处会让平滑静默失效
@@ -205,6 +228,15 @@ void TdtSmoother::configure(
       "TdtSmoother: path_resample_max_points=%d 过小，长路径会被截断，建议 >= 500。",
       path_resample_max_points_);
   }
+}
+
+void TdtSmoother::onOdom(const nav_msgs::msg::Odometry & msg)
+{
+  init_vel_ = Eigen::Vector2f(
+    static_cast<float>(msg.twist.twist.linear.x),
+    static_cast<float>(msg.twist.twist.linear.y));
+  init_vel_stamp_ = rclcpp::Time(msg.header.stamp);
+  init_vel_valid_ = true;
 }
 
 void TdtSmoother::cleanup()
@@ -291,6 +323,35 @@ bool TdtSmoother::smooth(
 
   MinimumSnap::SolveInput input;
   input.setPath(points);
+
+  // 起点速度约束：上游默认"自由"，实车换目标瞬间会给出与当前速度无关的首段加速度。
+  // 这里把底盘速度（车体系）旋转到路径坐标系后交给 setInitVel。
+  if (init_vel_from_odom_ && init_vel_valid_) {
+    const double age = (clock_->now() - init_vel_stamp_).seconds();
+    if (std::abs(age) <= init_vel_max_age_) {
+      Eigen::Vector2f v = init_vel_;
+      try {
+        const auto tr = tf_->lookupTransform(
+          path.header.frame_id, "base_link", tf2::TimePointZero);
+        const double yaw = tf2::getYaw(tr.transform.rotation);
+        const float c = static_cast<float>(std::cos(yaw));
+        const float s = static_cast<float>(std::sin(yaw));
+        v = Eigen::Vector2f(
+          c * init_vel_.x() - s * init_vel_.y(),
+          s * init_vel_.x() + c * init_vel_.y());
+      } catch (const tf2::TransformException & e) {
+        RCLCPP_WARN_THROTTLE(
+          node->get_logger(), *clock_, 2000,
+          "TdtSmoother: 起点速度无法转换到 %s（%s），按车体系使用",
+          path.header.frame_id.c_str(), e.what());
+      }
+      input.setInitVel(v);
+    } else {
+      RCLCPP_DEBUG(
+        node->get_logger(), "TdtSmoother: 里程计过期 %.2f s，起点速度按自由处理", age);
+    }
+  }
+
   input.setBackend(toBackend(backend_));
   input.setMaxSpeed(max_speed_);
   input.setMaxAcc(max_acc_);

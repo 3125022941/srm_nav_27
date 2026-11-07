@@ -12,6 +12,7 @@
 #include "nav2_core/smoother.hpp"
 #include "nav2_costmap_2d/costmap_subscriber.hpp"
 #include "nav2_costmap_2d/footprint_subscriber.hpp"
+#include "nav_msgs/msg/odometry.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
@@ -55,6 +56,18 @@ public:
 private:
   rclcpp_lifecycle::LifecycleNode::WeakPtr node_;
   std::shared_ptr<tf2_ros::Buffer> tf_;
+
+  /// 起点速度：上游默认「自由」（不约束），实车切换目标时会造成横向加速度突变。
+  /// 打开后取底盘当前速度（车体系）旋转到地图系，作为 setInitVel 的约束。
+  bool init_vel_from_odom_{false};
+  std::string odom_topic_{"odom"};
+  double init_vel_max_age_{0.3};
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+  Eigen::Vector2f init_vel_{Eigen::Vector2f::Zero()};
+  rclcpp::Time init_vel_stamp_{0, 0, RCL_ROS_TIME};
+  bool init_vel_valid_{false};
+
+  void onOdom(const nav_msgs::msg::Odometry & msg);
   std::shared_ptr<nav2_costmap_2d::CostmapSubscriber> costmap_sub_;
   std::shared_ptr<nav2_costmap_2d::FootprintSubscriber> footprint_sub_;
   std::string plugin_name_;

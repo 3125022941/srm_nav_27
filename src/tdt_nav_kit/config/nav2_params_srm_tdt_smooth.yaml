@@ -603,6 +603,11 @@ smoother_server:
       corner_round_cut: 0.40                             # 切角长度（米），0 = 关闭
       corner_round_min_turn_deg: 25.0                    # 大于该转角（度）才切角
       corner_round_sample_step: 0.20                     # 贝塞尔采样步长（米）
+      # 起点速度：上游默认"自由"（不约束首段速度），实车换目标时会造成横向加速度突变。
+      # 打开后取 odom_topic 的最新速度，旋转到路径坐标系后交给 setInitVel。
+      init_vel_from_odom: false                          # true = 用当前底盘速度作为起点约束
+      odom_topic: odom                                   # 速度来源（相对机器人命名空间）
+      init_vel_max_age: 0.30                             # 超过该时长(秒)视为无有效里程计
       min_points: 3                                       # 少于此点数不做平滑
       orientation_mode: "tangent"                         # 由相邻点求 yaw
 
