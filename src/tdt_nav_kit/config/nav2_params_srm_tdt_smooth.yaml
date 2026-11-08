@@ -15,6 +15,9 @@
 #       inflation_layer.inflation_radius          0.7   -> 0.5（local + global）
 #       global_costmap.track_unknown_space        缺省  -> true
 #       terrain_analysis_ext.vehicleHeight        0.5   -> 1.0
+#   * 2026-11-08 复核：曾把 min/max_lookahead 放大到 0.8/1.2 试图抑制长路径
+#     上的「画龙」（cmd 幅值恒 0.20、方向 ±90° 翻转），实测无改善（71 s 走 1.65 m，
+#     仍 ABORT），已回退。长路径真正卡住的是平滑器在动态障碍下的反复失败，见 README。
 #     目的：让仿真里验证过的行为在实车上能复现。此前仿真的到达容差、前瞻、膨胀都比实车
 #     "宽松/不同"，同一套航点两边表现会不一样。两条要留意：
 #       * xy_goal_tolerance=0.4 > 共享 BT 里 RemovePassedGoals 的 radius=0.35，所以途径点
@@ -579,7 +582,7 @@ smoother_server:
     tdt_smoother:
       plugin: "tdt_nav_kit::TdtSmoother"                  # T-DT MinimumSnap 平滑器
       occupancy_threshold: 252                            # = MAX_NON_OBSTACLE
-      treat_unknown_as_obstacle: true                     # NO_INFORMATION 按障碍
+      treat_unknown_as_obstacle: false                    # NO_INFORMATION 不按障碍：动态层留下的未观测格会让平滑恒失败
       order: 5                                            # 多项式阶数
       max_dx: 3                                           # 最大导数阶数
       strict_collision: false                             # 更严格但更慢、更易失败
