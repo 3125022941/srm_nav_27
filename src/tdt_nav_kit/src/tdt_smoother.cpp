@@ -148,6 +148,8 @@ void TdtSmoother::configure(
   declare_parameter_if_not_declared(
     node, p + "path_resample_max_points", rclcpp::ParameterValue(path_resample_max_points_));
   declare_parameter_if_not_declared(
+    node, p + "fallback_to_resampled", rclcpp::ParameterValue(fallback_to_resampled_));
+  declare_parameter_if_not_declared(
     node, p + "corner_round_cut", rclcpp::ParameterValue(corner_round_cut_));
   declare_parameter_if_not_declared(
     node, p + "corner_round_min_turn_deg",
@@ -183,6 +185,7 @@ void TdtSmoother::configure(
     static_cast<float>(node->get_parameter(p + "path_resample_step").as_double());
   path_resample_max_points_ =
     static_cast<int>(node->get_parameter(p + "path_resample_max_points").as_int());
+  fallback_to_resampled_ = node->get_parameter(p + "fallback_to_resampled").as_bool();
   corner_round_cut_ =
     static_cast<float>(node->get_parameter(p + "corner_round_cut").as_double());
   corner_round_min_turn_deg_ =
@@ -379,8 +382,17 @@ bool TdtSmoother::smooth(
   if (!result.success || result.path.size() < 2) {
     RCLCPP_WARN_THROTTLE(
       node->get_logger(), *clock_, 2000,
-      "TdtSmoother: OSQP solve failed (backend=%s, iter=%d, %.1f ms), keep original path",
-      backend_.c_str(), result.iter, result.time * 1000.0);
+      "TdtSmoother: OSQP solve failed (backend=%s, iter=%d, %.1f ms), %s",
+      backend_.c_str(), result.iter, result.time * 1000.0,
+      (fallback_to_resampled_ && points.size() >= 2) ?
+      "回退到加密折线（保证可跟踪）" : "keep original path");
+    if (fallback_to_resampled_ && points.size() >= 2) {
+      // 返回已加密的折线而不是原始稀疏点：上游规划器的段长可达 10 m，
+      // Nav2 控制器按 2.5 m 裁剪后只剩 1 个点，会退化成 0.2 m/s 爬行并判无进展。
+      writeBack(path, points, orientation_mode_);
+      path.header.stamp = node->now();
+      return true;
+    }
     return false;
   }
 
@@ -388,8 +400,15 @@ bool TdtSmoother::smooth(
   if (limit_s > 0.0 && elapsed > limit_s) {
     RCLCPP_WARN_THROTTLE(
       node->get_logger(), *clock_, 2000,
-      "TdtSmoother: exceeded max_time (%.1f ms > %.1f ms), keep original path",
-      elapsed * 1000.0, limit_s * 1000.0);
+      "TdtSmoother: exceeded max_time (%.1f ms > %.1f ms), %s",
+      elapsed * 1000.0, limit_s * 1000.0,
+      (fallback_to_resampled_ && points.size() >= 2) ?
+      "回退到加密折线（保证可跟踪）" : "keep original path");
+    if (fallback_to_resampled_ && points.size() >= 2) {
+      writeBack(path, points, orientation_mode_);
+      path.header.stamp = node->now();
+      return true;
+    }
     return false;
   }
 
