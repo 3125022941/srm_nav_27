@@ -423,6 +423,11 @@ controller_server:
       lookahead_time: 0.6                               # 速度缩放前视时间（秒）
       min_lookahead_dist: 0.3                           # 最小前视距离（米）
       max_lookahead_dist: 0.6                           # 最大前视距离（米）
+      # 最近点搜索范围（米）。未配置时代码默认取代价地图半宽(2.5)：车走过 2.5 m 后
+      # "最近点"永远落在车身后，transformed_plan 全是身后点，前视点指向后方——
+      # 车朝路径反方向跑、在 2.5 m 内往返振荡（实测 16 s 周期）。
+      # Nav2 RPP 同名参数默认 0 = 沿整条路径搜索，这里取 50 覆盖全路径。
+      max_robot_pose_search_dist: 50.0
       use_interpolation: false                           # 是否插值路径点
       use_rotate_to_heading: false                       # 是否先旋转到路径方向
       use_rotate_to_heading_treshold: 0.1                # 旋转到路径方向阈值（弧度）
@@ -467,7 +472,7 @@ local_costmap:
         z_resolution: 0.05                                 # Z方向体素分辨率（米）
         z_voxels: 16                                       # Z方向体素层数
         min_obstacle_height: 0.0                           # 接受障碍的最小高度（米）
-        max_obstacle_height: 2.0                           # 接受障碍的最大高度（米）
+        max_obstacle_height: 0.3                           # 接受障碍的最大高度（米）
         min_obstacle_intensity: 0.1                        # 接受障碍的最小点云强度
         max_obstacle_intensity: 2.0                        # 接受障碍的最大点云强度
         observation_sources: terrain_map                   # 障碍观测源名称
@@ -478,7 +483,7 @@ local_costmap:
           topic: <robot_namespace>/terrain_map               # 地形点云话题
           sensor_frame: front_mid360                         # 传感器坐标系
           min_obstacle_height: 0.0                            # 观测障碍高度下限（米）
-          max_obstacle_height: 2.0                            # 观测障碍高度上限（米）
+          max_obstacle_height: 0.3                            # 观测障碍高度上限（米）
           obstacle_max_range: 5.0                             # 最大障碍检测距离（米）
           obstacle_min_range: 0.55                          # 最小障碍检测距离（米）；须大于车体半径 0.274，否则雷达扫到自身
       static_layer:
@@ -486,8 +491,8 @@ local_costmap:
         map_subscribe_transient_local: True                 # 是否使用瞬态本地订阅地图
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"         # 障碍膨胀图层插件
-        cost_scaling_factor: 4.0                            # 膨胀代价衰减系数
-        inflation_radius: 0.5                               # 障碍膨胀半径（米）；与实车一致（原 0.7，实车调小以便钻窄道）
+        cost_scaling_factor: 3.0                            # 膨胀代价衰减系数
+        inflation_radius: 0.55                               # 障碍膨胀半径（米）；与实车一致（原 0.7，实车调小以便钻窄道）
       always_send_full_costmap: False                      # 是否每次发布完整代价地图
 
 global_costmap:
@@ -515,7 +520,7 @@ global_costmap:
         z_resolution: 0.05                                 # Z方向体素分辨率（米）
         z_voxels: 16                                       # Z方向体素层数
         min_obstacle_height: 0.0                           # 接受障碍的最小高度（米）
-        max_obstacle_height: 2.0                           # 接受障碍的最大高度（米）
+        max_obstacle_height: 0.3                           # 接受障碍的最大高度（米）
         min_obstacle_intensity: 0.1                        # 接受障碍的最小点云强度
         max_obstacle_intensity: 2.0                        # 接受障碍的最大点云强度
         observation_sources: terrain_map_ext               # 障碍观测源名称
@@ -526,7 +531,7 @@ global_costmap:
           topic: <robot_namespace>/terrain_map_ext          # 扩展地形点云话题
           sensor_frame: front_mid360                        # 传感器坐标系
           min_obstacle_height: 0.0                          # 观测障碍高度下限（米）
-          max_obstacle_height: 2.0                          # 观测障碍高度上限（米）
+          max_obstacle_height: 0.3                          # 观测障碍高度上限（米）
           obstacle_max_range: 10.0                          # 最大障碍检测距离（米）
           obstacle_min_range: 0.55                          # 最小障碍检测距离（米）；须大于车体半径 0.274，否则雷达扫到自身
       static_layer:
@@ -534,8 +539,8 @@ global_costmap:
         map_subscribe_transient_local: True                 # 是否使用瞬态本地订阅地图
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"         # 障碍膨胀图层插件
-        cost_scaling_factor: 4.0                            # 膨胀代价衰减系数
-        inflation_radius: 0.5                               # 障碍膨胀半径（米）；与实车一致（原 0.7，实车调小以便钻窄道）
+        cost_scaling_factor: 3.0                            # 膨胀代价衰减系数
+        inflation_radius: 0.55                               # 障碍膨胀半径（米）；与实车一致（原 0.7，实车调小以便钻窄道）
       always_send_full_costmap: False                      # 是否每次发布完整代价地图
 
 # The yaml_filename does not need to be specified since it going to be set by defaults in launch.
@@ -565,8 +570,8 @@ planner_server:
     planner_plugins: ["GridBased"]                         # 全局规划器列表
     GridBased:
       plugin: "tdt_nav_kit::TdtGlobalPlanner"             # T-DT YAstar 全局规划器
-      occupancy_threshold: 252                            # = MAX_NON_OBSTACLE
-      treat_unknown_as_obstacle: true                     # NO_INFORMATION 按障碍
+      occupancy_threshold: 252 # >180 视为障碍（余量约0.45m）。225 时车自身就落在高代价区，重规划起点被吸附到车后，前视点指向后方
+      treat_unknown_as_obstacle: false                     # NO_INFORMATION 按障碍  # PGM 先验完整，未观测≠真未知；true 会让远处目标被拒（雷达 range 外全是"未知"）
       mask_num_layers: 1
       cost_inflate_radius: 1.0
       simplify_epsilon: 0.1
@@ -581,7 +586,7 @@ smoother_server:
     smoother_plugins: ["tdt_smoother"]                     # 路径平滑器列表
     tdt_smoother:
       plugin: "tdt_nav_kit::TdtSmoother"                  # T-DT MinimumSnap 平滑器
-      occupancy_threshold: 252                            # = MAX_NON_OBSTACLE
+      occupancy_threshold: 252 # >180 视为障碍（余量约0.45m）。225 时车自身就落在高代价区，重规划起点被吸附到车后，前视点指向后方
       treat_unknown_as_obstacle: false                    # NO_INFORMATION 不按障碍：动态层留下的未观测格会让平滑恒失败
       order: 5                                            # 多项式阶数
       max_dx: 3                                           # 最大导数阶数
@@ -616,7 +621,7 @@ smoother_server:
       corner_round_sample_step: 0.20                     # 贝塞尔采样步长（米）
       # 起点速度：上游默认"自由"（不约束首段速度），实车换目标时会造成横向加速度突变。
       # 打开后取 odom_topic 的最新速度，旋转到路径坐标系后交给 setInitVel。
-      init_vel_from_odom: false                          # true = 用当前底盘速度作为起点约束
+      init_vel_from_odom: false                          # 实测：开启后车一动（非零起点速度）OSQP 就开始失败，3 Hz 重规划下平滑频繁 abort
       odom_topic: odom                                   # 速度来源（相对机器人命名空间）
       init_vel_max_age: 0.30                             # 超过该时长(秒)视为无有效里程计
       min_points: 3                                       # 少于此点数不做平滑
