@@ -14,6 +14,8 @@
 
 #include "srm27_omni_pid_controller/omni_pid_pursuit_controller.hpp"
 
+#include <limits>
+
 #include "nav2_core/exceptions.hpp"
 #include "nav2_util/geometry_utils.hpp"
 #include "nav2_util/node_utils.hpp"
@@ -363,16 +365,35 @@ std::unique_ptr<geometry_msgs::msg::PointStamped> OmniPidPursuitController::crea
 geometry_msgs::msg::PoseStamped OmniPidPursuitController::getLookAheadPoint(
   const double & lookahead_dist, const nav_msgs::msg::Path & transformed_plan)
 {
-  // Find the first pose which is at a distance greater than the lookahead distance
+  // 【修复 2026-11-09】先定位机器人当前在路径上的最近点，再沿路径前进方向找前视点。
+  //
+  // 原实现从 transformed_plan 开头 find_if「第一个到车距离 >= lookahead 的点」。
+  // transformed_plan 是从全局路径开头开始转换的（包含车已走过的段），车沿路径
+  // 走过 lookahead 距离后，路径开头（在车后方）就满足条件被选中——前视点指向
+  // 车后方，车便朝路径反方向冲刺，远离目标后行为树触发恢复（倒退），
+  // 形成「冲刺-倒退」循环、净位移≈0（实测 16 s 周期、2.5 m 往返）。
+  auto nearest_it = transformed_plan.poses.begin();
+  double nearest_dist = std::numeric_limits<double>::max();
+  for (auto it = transformed_plan.poses.begin();
+    it != transformed_plan.poses.end(); ++it)
+  {
+    const double d = std::hypot(it->pose.position.x, it->pose.position.y);
+    if (d < nearest_dist) {
+      nearest_dist = d;
+      nearest_it = it;
+    }
+  }
+
+  // 沿路径前进方向找第一个到车距离 >= lookahead 的点（保证前视点在车前方）
   auto goal_pose_it = std::find_if(
-    transformed_plan.poses.begin(), transformed_plan.poses.end(), [&](const auto & ps) {
-      return hypot(ps.pose.position.x, ps.pose.position.y) >= lookahead_dist;
+    nearest_it, transformed_plan.poses.end(), [&](const auto & ps) {
+      return std::hypot(ps.pose.position.x, ps.pose.position.y) >= lookahead_dist;
     });
 
   // If the no pose is not far enough, take the last pose
   if (goal_pose_it == transformed_plan.poses.end()) {
     goal_pose_it = std::prev(transformed_plan.poses.end());
-  } else if (use_interpolation_ && goal_pose_it != transformed_plan.poses.begin()) {
+  } else if (goal_pose_it != nearest_it && use_interpolation_) {
     // Find the point on the line segment between the two poses
     // that is exactly the lookahead distance away from the robot pose (the origin)
     // This can be found with a closed form for the intersection of a segment and a circle
