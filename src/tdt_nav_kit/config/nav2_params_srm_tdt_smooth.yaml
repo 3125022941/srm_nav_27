@@ -579,6 +579,11 @@ smoother_server:
   ros__parameters:
     use_sim_time: True                                     # 是否使用仿真时钟
     smoother_plugins: ["tdt_smoother"]                     # 路径平滑器列表
+    # Nav2 的 smoother_server 在插件返回后会用「足迹 + raw 代价图」再复核一遍，
+    # 判据比规划器严（raw 图里膨胀层仍是致死格）。本场地走廊宽度下必然失败，
+    # 失败会让行为树直接走恢复（倒退）。碰撞校验已由 tdt_smoother 内部完成，
+    # 这里把复核指向静态地图（占据值 100，不触发致死判定）。
+    costmap_topic: map
     tdt_smoother:
       plugin: "tdt_nav_kit::TdtSmoother"                  # T-DT MinimumSnap 平滑器
       occupancy_threshold: 252                            # = MAX_NON_OBSTACLE
