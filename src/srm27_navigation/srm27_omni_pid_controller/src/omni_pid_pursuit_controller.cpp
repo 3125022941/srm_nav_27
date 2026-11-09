@@ -279,7 +279,12 @@ geometry_msgs::msg::TwistStamped OmniPidPursuitController::computeVelocityComman
   return cmd_vel;
 }
 
-void OmniPidPursuitController::setPlan(const nav_msgs::msg::Path & path) { global_plan_ = path; }
+void OmniPidPursuitController::setPlan(const nav_msgs::msg::Path & path)
+{
+  global_plan_ = path;
+  // 新路径的起点在机器人当前位姿附近，进度从 0 重新计。
+  progress_index_ = 0;
+}
 
 void OmniPidPursuitController::setSpeedLimit(
   const double & /*speed_limit*/, const bool & /*percentage*/)
@@ -309,11 +314,22 @@ nav_msgs::msg::Path OmniPidPursuitController::transformGlobalPlan(
   // First find the closest pose on the path to the robot
   // bounded by when the path turns around (if it does) so we don't get a pose from a later
   // portion of the path
+  //
+  // 【修复 2026-11-09】搜索起点带进度记忆：从 progress_index_ 开始，不往回搜。
+  // 自相近路径（绕行的平行段）上，无约束的最近点会跳到另一条分支——已走过的
+  // 点被重新纳入局部路径，前视点指向前一轮分支，车沿路径往返振荡
+  // （实测 16 s 周期、2.5 m 往返、净位移≈0）。setPlan（重规划出的新路径）
+  // 会把进度重置为 0，此时新路径起点本就在车附近，行为正确。
+  const std::size_t search_from =
+    std::min(progress_index_, global_plan_.poses.size());
   auto transformation_begin = nav2_util::geometry_utils::min_by(
-    global_plan_.poses.begin(), closest_pose_upper_bound,
+    global_plan_.poses.begin() + static_cast<long>(search_from),
+    closest_pose_upper_bound,
     [&robot_pose](const geometry_msgs::msg::PoseStamped & ps) {
       return euclidean_distance(robot_pose, ps);
     });
+  progress_index_ = static_cast<std::size_t>(
+    std::distance(global_plan_.poses.begin(), transformation_begin));
 
   // Find points up to max_transform_dist so we only transform them.
   auto transformation_end = std::find_if(
@@ -384,11 +400,12 @@ geometry_msgs::msg::PoseStamped OmniPidPursuitController::getLookAheadPoint(
     }
   }
 
-  // 沿路径前进方向找第一个到车距离 >= lookahead 的点（保证前视点在车前方）
-  auto goal_pose_it = std::find_if(
-    nearest_it, transformed_plan.poses.end(), [&](const auto & ps) {
-      return std::hypot(ps.pose.position.x, ps.pose.position.y) >= lookahead_dist;
-    });
+  // 沿路径前进方向按【弧长】取前视点：从最近点沿路径累计 lookahead 距离。
+  // 之前按「到车的欧氏距离」选取，弯道内侧的点会提前满足条件，
+  // 前视点被拉向弯内，车在弯道上向内切。弧长制保证前视点严格在
+  // 路径前方 lookahead 处，弯道行为由 PID 自然修正。
+  auto goal_pose_it = nav2_util::geometry_utils::first_after_integrated_distance(
+    nearest_it, transformed_plan.poses.end(), lookahead_dist);
 
   // If the no pose is not far enough, take the last pose
   if (goal_pose_it == transformed_plan.poses.end()) {

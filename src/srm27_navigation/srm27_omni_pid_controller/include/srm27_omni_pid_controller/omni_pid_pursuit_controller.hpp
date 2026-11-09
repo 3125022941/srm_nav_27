@@ -116,6 +116,12 @@ protected:
    */
   nav_msgs::msg::Path transformGlobalPlan(const geometry_msgs::msg::PoseStamped & pose);
 
+  /// 最近点进度索引（防回退）：min_by 搜索从该索引开始，找到后更新。
+  /// 自相近路径（绕行有平行段）上，无约束的欧氏最近点会在两条分支间跳变，
+  /// 已走过的点被重新纳入局部路径，前视点随之指向前一轮路径的分支，
+  /// 实测表现为沿路径往返振荡。setPlan（新路径）时重置为 0。
+  std::size_t progress_index_{0};
+
   /**
    * @brief Transform a pose to another frame.
    * @param frame Frame ID to transform to
