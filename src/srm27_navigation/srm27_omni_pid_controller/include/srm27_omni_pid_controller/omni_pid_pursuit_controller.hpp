@@ -279,6 +279,7 @@ private:
   // Controller parameters
   double translation_kp_, translation_ki_, translation_kd_;
   bool enable_rotation_;
+  bool enable_collision_check_;
   double rotation_kp_, rotation_ki_, rotation_kd_;
   double min_max_sum_error_;
   double control_duration_;

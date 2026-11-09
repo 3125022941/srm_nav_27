@@ -55,6 +55,12 @@ void OmniPidPursuitController::configure(
 
   declare_parameter_if_not_declared(
     node, plugin_name_ + ".translation_kp", rclcpp::ParameterValue(3.0));
+  // 【2026-11-09】轨迹碰撞检查开关：检查读 local costmap 的 253+ 格，但雷达
+  // 动态层标的墙与 PGM 静态墙位置存在偏差（A* 绕的是 PGM 墙），长路径平滑
+  // 曲线会踩上"雷达偏移的 254"而反复 abort。全局安全已由 A*（挡 253）+
+  // smoother（挡 253）保证，此检查降级为可选。
+  declare_parameter_if_not_declared(
+    node, plugin_name_ + ".enable_collision_check", rclcpp::ParameterValue(true));
   declare_parameter_if_not_declared(
     node, plugin_name_ + ".translation_ki", rclcpp::ParameterValue(0.1));
   declare_parameter_if_not_declared(
@@ -116,6 +122,7 @@ void OmniPidPursuitController::configure(
     node, plugin_name_ + ".max_velocity_scaling_factor_rate", rclcpp::ParameterValue(0.9));
 
   node->get_parameter(plugin_name_ + ".translation_kp", translation_kp_);
+  node->get_parameter(plugin_name_ + ".enable_collision_check", enable_collision_check_);
   node->get_parameter(plugin_name_ + ".translation_ki", translation_ki_);
   node->get_parameter(plugin_name_ + ".translation_kd", translation_kd_);
   node->get_parameter(plugin_name_ + ".enable_rotation", enable_rotation_);
@@ -268,7 +275,7 @@ geometry_msgs::msg::TwistStamped OmniPidPursuitController::computeVelocityComman
 
   geometry_msgs::msg::TwistStamped cmd_vel;
   cmd_vel.header = pose.header;
-  if (!isCollisionDetected(costmap_frame_local_plan)) {
+  if (!enable_collision_check_ || !isCollisionDetected(costmap_frame_local_plan)) {
     cmd_vel.twist.linear.x = lin_vel * cos(theta_dist);
     cmd_vel.twist.linear.y = lin_vel * sin(theta_dist);
     cmd_vel.twist.angular.z = angular_vel;
@@ -358,6 +365,13 @@ nav_msgs::msg::Path OmniPidPursuitController::transformGlobalPlan(
   // Remove the portion of the global plan that we've already passed so we don't
   // process it on the next iteration (this is called path pruning)
   global_plan_.poses.erase(begin(global_plan_.poses), transformation_begin);
+  // 【修复 2026-11-09】pruning 之后索引基准前移：progress_index_ 是相对
+  // global_plan_ 的绝对下标，erase 掉前缀后若不同步清零，下一轮
+  // search_from 会指向"更靠后"的点——错位逐轮累积，直到最近点距车
+  // 超出 max_costmap_extent，transformed_plan 变成 0 poses（实测长路径
+  // 走到 3.5 m 后卡死的直接原因）。erase 后向量首元即"当前最近点"，
+  // 从 0 重新搜索既正确又保留防回退语义（已走过的点已被物理删除）。
+  progress_index_ = 0;
   local_path_pub_->publish(transformed_plan);
 
   if (transformed_plan.poses.empty()) {
