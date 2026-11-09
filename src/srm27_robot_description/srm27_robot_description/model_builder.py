@@ -403,7 +403,7 @@ def build_sdf(
       <sensor name="{lidar['link_name']}_imu" type="imu">
         <ignition_frame_id>{lidar['link_name']}</ignition_frame_id>
         <always_on>1</always_on>
-        <update_rate>200</update_rate>
+        <update_rate>10</update_rate>
         <visualize>true</visualize>
       </sensor>
       <sensor name="{lidar['link_name']}_lidar" type="gpu_lidar">

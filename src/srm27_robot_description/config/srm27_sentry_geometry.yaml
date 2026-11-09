@@ -84,7 +84,7 @@ lidar:
   mesh_sdf: model://mid360/meshes/mid360.dae
   mesh_sdf_origin_rpy: [0.0, 0.0, 3.141592653589793]
   mass: 0.25
-  update_rate: 20
+  update_rate: 5  # 5 Hz：20 Hz 全场 raycast 是 ign 进程 500%+ CPU 的主源；Nav2 costmap 5 Hz 足够
   samples: 1875
   horizontal_min_angle: 0.0
   horizontal_max_angle: 6.2831852
@@ -98,7 +98,7 @@ lidar:
 imu:
   # 底盘 IMU 挂在 base_link 上，帧名保持 chassis_imu 供现有链路使用。
   sensor_name: chassis_imu
-  update_rate: 200
+  update_rate: 10  # 降频：200 Hz 全场 raycast 把 WSL 软渲染压到 load>90，10 Hz 对 Nav2 足够
 
 # 云台示意圆柱（半透明黄），与实车链路 xacro 里的 gimbal_yaw 外观一致。
 # 仿真里它**只有 visual、没有 collision、也没有关节/传感器**：不影响动力学与导航，
