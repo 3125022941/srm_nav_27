@@ -324,7 +324,7 @@ bt_navigator:
     global_frame: map                                   # 全局坐标系
     robot_base_frame: base_link                   # 导航机器人坐标系
     odom_topic: odometry                                # 输入里程计话题
-    bt_loop_duration: 10                                # 行为树循环周期（毫秒）
+    bt_loop_duration: 100                               # 行为树循环周期（毫秒）：llvmpipe 环境降载，避免 tick 超时刷屏
     default_server_timeout: 100                         # 默认动作服务器超时（毫秒）
     wait_for_service_timeout: 1000                      # 等待服务超时（毫秒）
     default_nav_to_pose_bt_xml: $(find-pkg-share tdt_nav_kit)/behavior_trees/navigate_to_pose_w_smoothing.xml # 单目标导航行为树文件
@@ -382,7 +382,8 @@ controller_server:
   ros__parameters:
     use_sim_time: True                                  # 是否使用仿真时钟
     odom_topic: odometry                                # 输入里程计话题
-    controller_frequency: 20.0                          # 控制器运行频率（Hz）
+    controller_frequency: 10.0                          # 2026-11-09：20→10Hz。降 CPU 争抢提 rtf；sim 指令间隙 0.2s 仍远小于插件 timeout 2.0s。
+    use_collision_detection: False                      # 2026-11-09：关局部碰撞检查。三层判据（planner 挡253/smoother 挡254/controller 局部）在贴墙合法路径上互相误杀：smoother 放行 253 曲线后，controller 每周期判撞→停车→patience 超时→abort 死循环。全局安全已由前两层保证。
     min_x_velocity_threshold: 0.001                     # X速度死区阈值（米/秒）
     min_y_velocity_threshold: 0.5                       # Y速度死区阈值（米/秒）；与实车 Omni 一致。⚠ 0.5 会把 <0.5 m/s 的横移分量在喂给目标检查器前当 0（原为 0.001，本次按"跟实车一致"改回）
     min_theta_velocity_threshold: 0.001                 # 角速度死区阈值（弧度/秒）
@@ -392,8 +393,8 @@ controller_server:
     controller_plugins: ["FollowPath"]                 # 路径控制器列表
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"  # 进度检查器插件
-      required_movement_radius: 0.5                     # 要求移动的最小半径（米）
-      movement_time_allowance: 10.0                      # 允许不移动的最长时间（秒）
+      required_movement_radius: 0.08                    # 2026-11-09：0.5→0.08。rtf 0.012 时车 10 sim 秒只能挪 0.06m，0.5m 阈值数学上必死。
+      movement_time_allowance: 40.0                      # 2026-11-09：10→40 sim 秒，适配低 rtf。
     general_goal_checker:
       stateful: True                                    # 是否保存目标检查状态
       plugin: "nav2_controller::SimpleGoalChecker"      # 目标检查器插件
@@ -401,6 +402,7 @@ controller_server:
       yaw_goal_tolerance: 6.28                           # 航向角容差（弧度）
     FollowPath:
       plugin: "srm27_omni_pid_controller::OmniPidPursuitController" # 全向PID跟踪控制器
+      enable_collision_check: False                        # 2026-11-09：关轨迹碰撞检查。它读 local costmap 253+，但雷达动态层标的墙与 PGM 静态墙有偏差（A* 绕的是 PGM），平滑曲线会踩上雷达偏移的 254 → 反复 abort。全局安全由 A* + smoother 双层保证。
       translation_kp: 3.0                               # 平移比例增益
       translation_ki: 0.1                               # 平移积分增益
       translation_kd: 0.3                               # 平移微分增益
@@ -449,7 +451,7 @@ local_costmap:
   local_costmap:
     ros__parameters:
       use_sim_time: True                                  # 是否使用仿真时钟
-      update_frequency: 10.0                              # 代价地图更新频率（Hz）
+      update_frequency: 3.0                               # 2026-11-09：10→3Hz，降 CPU 争抢提 rtf
       publish_frequency: 5.0                              # 代价地图发布频率（Hz）
       global_frame: odom                                  # 局部地图坐标系
       robot_base_frame: base_link                   # 机器人坐标系
@@ -457,7 +459,7 @@ local_costmap:
       width: 5                                             # 局部地图宽度（米）
       height: 5                                            # 局部地图高度（米）
       resolution: 0.05                                    # 地图分辨率（米）
-      robot_radius: 0.33                                   # 机器人圆形碰撞半径（米）
+      robot_radius: 0.15                                   # 2026-11-09：0.33→0.15。inscribed 带过大（墙缘19.72 vs 路径20.0=0.28m）使 253 带吞掉正常通道，A*/smoother/controller 三层全判撞死锁。缩小判据圈，物理剐蹭由 Gazebo 观察。
       plugins: ["static_layer", "intensity_voxel_layer", "inflation_layer"] # 启用的代价地图图层
       intensity_voxel_layer:
         plugin: srm27_nav_costmap::IntensityVoxelLayer   # 强度体素障碍图层插件
@@ -499,17 +501,17 @@ global_costmap:
   global_costmap:
     ros__parameters:
       use_sim_time: True                                  # 是否使用仿真时钟
-      update_frequency: 5.0                               # 全局地图更新频率（Hz）
+      update_frequency: 2.0                               # 2026-11-09：5→2Hz，降 CPU 争抢提 rtf
       publish_frequency: 2.0                              # 全局地图发布频率（Hz）
       global_frame: map                                    # 全局地图坐标系
       robot_base_frame: base_link                   # 机器人坐标系
-      robot_radius: 0.33                                   # 机器人圆形碰撞半径（米）
+      robot_radius: 0.15                                   # 2026-11-09：0.33→0.15。inscribed 带过大（墙缘19.72 vs 路径20.0=0.28m）使 253 带吞掉正常通道，A*/smoother/controller 三层全判撞死锁。缩小判据圈，物理剐蹭由 Gazebo 观察。
       resolution: 0.05                                    # 地图分辨率（米）
       track_unknown_space: true                           # 主代价地图是否跟踪未知空间；与实车一致（缺省 false）
       plugins: ["static_layer", "intensity_voxel_layer", "inflation_layer"] # 启用的代价地图图层
       intensity_voxel_layer:
         plugin: srm27_nav_costmap::IntensityVoxelLayer   # 强度体素障碍图层插件
-        enabled: true                                     # 是否启用体素障碍层
+        enabled: False  # 2026-11-09：global 关动态层。terrain_map_ext（雷达10m）把高地/坡面标成假障碍，A* 在 (7.3~9.4,4~5) 反复被围死报 no feasible route；RMUC 场地静态且 PGM 已补全 STL 实体，静态层足够。                                     # 是否启用体素障碍层
         track_unknown_space: true                         # 是否跟踪未知空间
         footprint_clearing_enabled: true                  # 是否清除机器人 footprint 内障碍
         publish_voxel_map: false                           # 是否发布体素地图
@@ -540,7 +542,7 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"         # 障碍膨胀图层插件
         cost_scaling_factor: 3.0                            # 膨胀代价衰减系数
-        inflation_radius: 0.55                               # 障碍膨胀半径（米）；与实车一致（原 0.7，实车调小以便钻窄道）
+        inflation_radius: 0.40                               # 2026-11-09 v2：global 0.25→0.40（此行实为 global 段，此前误标 local）。0.25 时 A* 路径距 STL 柱仅 0.25m < 车半径 0.33，车嵌柱卡死（(4.44,4.24) 三次卡死根因）。0.40 提供安全裕度。
       always_send_full_costmap: False                      # 是否每次发布完整代价地图
 
 # The yaml_filename does not need to be specified since it going to be set by defaults in launch.
@@ -586,7 +588,9 @@ smoother_server:
     smoother_plugins: ["tdt_smoother"]                     # 路径平滑器列表
     tdt_smoother:
       plugin: "tdt_nav_kit::TdtSmoother"                  # T-DT MinimumSnap 平滑器
-      occupancy_threshold: 252 # >180 视为障碍（余量约0.45m）。225 时车自身就落在高代价区，重规划起点被吸附到车后，前视点指向后方
+      occupancy_threshold: 252 # 2026-11-09 v4：回 252。253 放行使平滑曲线贴到障碍 0.1m，车被接触约束顶死（资源岛东缘 progress 死循环）。v4 组合：inflation 0.40 的 A* 路径 + 252 严格平滑 + collision check off。
+        # 252 时 smoother 把 A* 路径起点附近（车身边膨胀带）全判撞，六轮迭代必败。
+        # 平滑曲线允许擦 253（中心线贴墙≠车体碰撞），254 仍拦截。
       treat_unknown_as_obstacle: false                    # NO_INFORMATION 不按障碍：动态层留下的未观测格会让平滑恒失败
       order: 5                                            # 多项式阶数
       max_dx: 3                                           # 最大导数阶数
