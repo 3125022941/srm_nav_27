@@ -5,6 +5,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <iomanip>
+#include <limits>
 #include <numeric>
 #include <thread>
 #include <future>
@@ -157,6 +159,22 @@ static MinimumSnap::SolveOutput iterate(
 
         result.iter = round + 1;
         result.success = bad.empty() && !result.path.empty();
+        // 诊断（节流）：每秒至多 1 条，记录失败轮次的 bad 段规模与首个位置。
+        static std::chrono::steady_clock::time_point lastLog;
+        if(!bad.empty() &&
+           std::chrono::steady_clock::now() - lastLog > std::chrono::seconds(1)){
+            lastLog = std::chrono::steady_clock::now();
+            const int seg = bad.front();
+            std::cout << "[smooth-iter] round=" << round << "/" << maxIter
+                      << " bad=" << bad.size() << "/" << coefficients.first.rows()
+                      << " first_seg=" << seg
+                      << " p=(" << std::fixed << std::setprecision(2)
+                      << result.path[std::min<size_t>(
+                             static_cast<size_t>(seg) * 10, result.path.size() - 1)].x()
+                      << "," << result.path[std::min<size_t>(
+                             static_cast<size_t>(seg) * 10, result.path.size() - 1)].y()
+                      << ")" << std::endl;
+        }
         double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
         if(result.success || round + 1 == maxIter || elapsed >= timeLimit){
             break;
@@ -888,8 +906,18 @@ std::pair<MinimumSnap::MatXd, MinimumSnap::MatXd> MinimumSnap::osqpExecute(
         if(solver.solveProblem() != OsqpEigen::ErrorExitFlag::NoError ||
            (solver.getStatus() != OsqpEigen::Status::Solved &&
             solver.getStatus() != OsqpEigen::Status::SolvedInaccurate)){
-            std::cout << "OSQP未收敛，方向=" << axis
-                      << " 状态=" << static_cast<int>(solver.getStatus()) << std::endl;
+            // 诊断（节流）：打印 OSQP 状态与迭代，定位 corridor 收敛失败原因。
+            static std::chrono::steady_clock::time_point lastFailLog;
+            const auto nowFail = std::chrono::steady_clock::now();
+            if (nowFail - lastFailLog > std::chrono::seconds(2))
+            {
+                lastFailLog = nowFail;
+                std::cout << "[osqp-fail] axis=" << axis
+                          << " status=" << static_cast<int>(solver.getStatus())
+                          << " iter=" << solver.getNumberOfIterations()
+                          << " vars=" << A.cols()
+                          << " cons=" << A.rows() << std::endl;
+            }
             return {};
         }
 
@@ -898,6 +926,14 @@ std::pair<MinimumSnap::MatXd, MinimumSnap::MatXd> MinimumSnap::osqpExecute(
         if(!solution.col(axis).allFinite() ||
            (axisLow - values).maxCoeff() > 1e-5 ||
            (values - axisUp).maxCoeff() > 1e-5){
+            // 诊断：OSQP 报 solved 但解越界（数值残差），打印违反量定位。
+            double loViol = solution.col(axis).allFinite()
+                ? (axisLow - values).maxCoeff() : std::numeric_limits<double>::quiet_NaN();
+            double upViol = solution.col(axis).allFinite()
+                ? (values - axisUp).maxCoeff() : std::numeric_limits<double>::quiet_NaN();
+            std::cout << "[osqp-execute] 解无效: finite=" << solution.col(axis).allFinite()
+                      << " 下界违反=" << loViol << " 上界违反=" << upViol
+                      << " 变量数=" << A.cols() << " 约束数=" << A.rows() << std::endl;
             return {};
         }
     }

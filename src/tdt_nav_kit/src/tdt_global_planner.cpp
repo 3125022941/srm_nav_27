@@ -193,14 +193,13 @@ nav_msgs::msg::Path TdtGlobalPlanner::createPlan(
     snap.data);
   // setMaskNumLayers 会按 occMap 尺寸重建掩码，必须在 setMap 之后。
   planner.setMaskNumLayers(mask_num_layers_);
-  // 【2026-11-09】代价场改「贴墙重罚 + 远处零代价」。
-  // 上游 f(x)=0.5/(0.1+x)（x=离障碍距离）在 Nav2 膨胀地图上会放大绕行偏好：
-  // 目标方向的走廊里有膨胀梯度（cost 1~99 对应距离 0.3~0.8 m，f≈0.03~0.6/格），
-  // 而反方向的空旷区 f=0——A* 为省这点代价朝反方向绕行，实测第一段朝西南
-  // （车朝路径反方向跑的直接原因）。改为：0.30 m 内重罚（相当于贴墙禁行），
-  // 之外零代价——A* 退化成几何最短路径，避障交给 occupancy 图（cost>252）。
+  // 【2026-11-09 v2】代价场改「0.60 m 内重罚 + 远处零代价」。
+  // v1（0.30 m）实测不足：inscribed 半径 0.33 m、膨胀 0.55 m，距墙 0.5 m 处
+  // costmap 已是 253（INSCRIBED）。0.30 m 重罚放行了 0.3~0.55 m 的贴墙段，
+  // smoother 的 SFC（threshold 252）判撞 → OSQP 六轮迭代必败 → BT 死循环。
+  // 0.60 m 覆盖 inscribed+膨胀带，A* 路径不再进入 253 区。
   planner.setCostField(
-    cost_inflate_radius_, [](float x) { return x < 0.30f ? 100.0f : 0.0f; });
+    cost_inflate_radius_, [](float x) { return x < 0.60f ? 100.0f : 0.0f; });
   planner.initCostMap();
 
   const YAstar::TMatrix<u_char> map_img = planner.getMap();
