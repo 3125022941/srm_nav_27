@@ -77,7 +77,7 @@ MINCO + L-BFGS：PRE_OPTIMIZATION → FINELY_OPTIMIZATION
 
 ### 2.1 实际运行链路
 
-【现状】SRM 仿真入口是 `src/srm27_navigation/srm27_nav_bringup/launch/nav_srm_simulation_launch.py`：
+【现状】SRM 仿真入口是 `src/bringup/srm27_nav_bringup/launch/nav_srm_simulation_launch.py`：
 
 ```text
 Nav2 controller_server / FollowPath
@@ -115,7 +115,7 @@ srm_velocity_adapter → Gazebo 底盘速度执行插件
 
 这些是静态代码审计结论；真实传感器频率、端到端延迟、附着系数、质量、惯量、最大制动能力均为【待测】。
 
-模型几何已进一步核查，来源为 `src/srm27_robot_description/config/srm27_sentry_geometry.yaml`：
+模型几何已进一步核查，来源为 `src/simulation/srm27_robot_description/config/srm27_sentry_geometry.yaml`：
 
 | 项目 | 当前仓库模型值 | 方案中的用途 |
 |---|---|---|
@@ -387,6 +387,9 @@ flowchart TD
 
 ### 4.2 建议新增目录
 
+> 2026-11-15 目录已按模块重组；下面保留为当时的方案结构，实际 vendor 在
+> `src/trajectory_planning/backend/`。
+
 ```text
 src/srm27_navigation/
 ├── srm27_minco_vendor/                  # 上游头文件、版本和许可证
@@ -477,11 +480,11 @@ srm27_chassis_control ← 经约定的速度/模式接口
 
 #### 4.5.2 已核查的本项目规范来源
 
-1. [`src/srm27_navigation/README.md`](../../src/srm27_navigation/README.md)：要求修改聚焦具体问题，避免混入全仓库格式化；实施代码需完成相应测试。
+1. [`docs/archive/srm27_navigation_README.md`](../../docs/archive/srm27_navigation_README.md)：要求修改聚焦具体问题，避免混入全仓库格式化；实施代码需完成相应测试。
 2. `srm27_omni_pid_controller` 的 `.clang-format`（当前包内未提供该文件，规范以实际配置为准）：现有 Nav2 controller 的 C++ 格式基准，Google 风格派生、100 列、既定换行/大括号/指针对齐规则。
 3. `srm27_omni_pid_controller` 的 `.clang-tidy`（当前包内未提供该文件，规范以实际配置为准）：类名 CamelCase、方法 camelBack、变量 lower_case、私有/受保护成员末尾 `_` 等规则，以配置实际检查为准。
-4. [`srm27_omni_pid_controller/CMakeLists.txt`](../../src/srm27_navigation/srm27_omni_pid_controller/CMakeLists.txt)：C++17、ament、pluginlib 导出和 clang-format/clang-tidy 检查的现有实现。
-5. [`srm27_chassis_control/CMakeLists.txt`](../../src/srm27_chassis_control/CMakeLists.txt)：纯逻辑 core 与 ROS 节点拆分、gtest、目标链接/安装的本项目示例。修改 chassis_control 时遵循该包既有命名与格式，不强行把整包改成另一个子包的风格。
+4. [`srm27_omni_pid_controller/CMakeLists.txt`](../../src/controller/srm27_omni_pid_controller/CMakeLists.txt)：C++17、ament、pluginlib 导出和 clang-format/clang-tidy 检查的现有实现。
+5. [`srm27_chassis_control/CMakeLists.txt`](../../src/controller/srm27_chassis_control/CMakeLists.txt)：纯逻辑 core 与 ROS 节点拆分、gtest、目标链接/安装的本项目示例。修改 chassis_control 时遵循该包既有命名与格式，不强行把整包改成另一个子包的风格。
 
 仓库根目录当前没有统一 `.clang-format/.clang-tidy` 可供所有包自动继承，因此**新增 controller/core 包必须带明确的检查配置**，优先采用相邻 Nav2 controller 的规则。vendor 原样文件保留上游格式和许可，限制格式化/静态检查范围，避免因导入第三方源码导致全量无意义改写。
 
@@ -1143,7 +1146,7 @@ colcon test --packages-select srm27_minco_core srm27_minco_controller srm27_chas
 colcon test-result --verbose
 
 # 初期 XY 低速联调，关闭独立自转；MPC 自身约束通过后再关闭 smoother。
-PARAMS_FILE=/home/srm/srm_nav_27/src/srm27_navigation/srm27_nav_bringup/config/simulation/nav2_params_srm_minco.yaml \
+PARAMS_FILE=/home/srm/srm_nav_27/src/bringup/srm27_nav_bringup/config/simulation/nav2_params_srm_minco.yaml \
 ROTATION_MODE=stop \
 USE_VELOCITY_SMOOTHER=False \
 bash scripts/bringup/start_sim_nav.sh
@@ -1234,21 +1237,21 @@ ros2 service call /red_standard_robot1/srm_cmd_mux/stop_all std_srvs/srv/Trigger
 
 ### A.4 当前项目关键文件
 
-- [SRM 仿真入口](../../src/srm27_navigation/srm27_nav_bringup/launch/nav_srm_simulation_launch.py)
-- [机器人公共几何与雷达外参](../../src/srm27_robot_description/config/srm27_sentry_geometry.yaml)
-- [实际 URDF/SDF 生成器](../../src/srm27_robot_description/srm27_robot_description/model_builder.py)
-- [仓库模型 xacro](../../src/srm27_robot_description/urdf/srm27_sentry.urdf.xacro)
-- [SRM 仿真 Nav2 参数](../../src/srm27_navigation/srm27_nav_bringup/config/simulation/nav2_params_srm.yaml)
-- [当前实车入口](../../src/srm27_navigation/srm27_nav_bringup/launch/nav_real_launch.py)
-- [SRM 实车参数](../../src/srm27_navigation/srm27_nav_bringup/config/real/nav2_params_srm.yaml)
-- [导航节点与速度 remap](../../src/srm27_navigation/srm27_nav_bringup/launch/navigation_launch.py)
-- [原 Omni 插件接口](../../src/srm27_navigation/srm27_omni_pid_controller/include/srm27_omni_pid_controller/omni_pid_pursuit_controller.hpp)
-- [里程计差分与 TF 处理](../../src/srm27_navigation/sensor_scan_generation/src/sensor_scan_generation.cpp)
-- [mux 与停止服务](../../src/srm27_chassis_control/src/cmd_mux_node.cpp)
-- [速度合成函数](../../src/srm27_chassis_control/src/velocity_mix.cpp)
-- [底盘限速与超时](../../src/srm27_chassis_control/config/srm_chassis_control.yaml)
-- [串口速度接口](../../src/srm27_nav_protocol/src/srm27_nav_protocol.cpp)
-- [导航行为树](../../src/srm27_navigation/srm27_nav_bringup/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml)
+- [SRM 仿真入口](../../src/bringup/srm27_nav_bringup/launch/nav_srm_simulation_launch.py)
+- [机器人公共几何与雷达外参](../../src/simulation/srm27_robot_description/config/srm27_sentry_geometry.yaml)
+- [实际 URDF/SDF 生成器](../../src/simulation/srm27_robot_description/srm27_robot_description/model_builder.py)
+- [仓库模型 xacro](../../src/simulation/srm27_robot_description/urdf/srm27_sentry.urdf.xacro)
+- [SRM 仿真 Nav2 参数](../../src/bringup/srm27_nav_bringup/config/simulation/nav2_params_srm.yaml)
+- [当前实车入口](../../src/bringup/srm27_nav_bringup/launch/nav_real_launch.py)
+- [SRM 实车参数](../../src/bringup/srm27_nav_bringup/config/real/nav2_params_srm.yaml)
+- [导航节点与速度 remap](../../src/bringup/srm27_nav_bringup/launch/navigation_launch.py)
+- [原 Omni 插件接口](../../src/controller/srm27_omni_pid_controller/include/srm27_omni_pid_controller/omni_pid_pursuit_controller.hpp)
+- [里程计差分与 TF 处理](../../src/perception_localization/backend/sensor_scan_generation/src/sensor_scan_generation.cpp)
+- [mux 与停止服务](../../src/controller/srm27_chassis_control/src/cmd_mux_node.cpp)
+- [速度合成函数](../../src/controller/srm27_chassis_control/src/velocity_mix.cpp)
+- [底盘限速与超时](../../src/controller/srm27_chassis_control/config/srm_chassis_control.yaml)
+- [串口速度接口](../../src/controller/srm27_nav_protocol/src/srm27_nav_protocol.cpp)
+- [导航行为树](../../src/bringup/srm27_nav_bringup/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml)
 - [仿真启动脚本](../../scripts/bringup/start_sim_nav.sh)
 
 文档文件：`docs/迁移minco实施方案(ai).md`；核查于本机本地日期 2026-10-06。除新方案与索引外，本次未修改导航实现、运行配置或底盘协议。

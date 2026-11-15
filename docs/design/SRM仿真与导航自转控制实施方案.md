@@ -206,10 +206,10 @@ srm27_gazebo_simulator/
 
 | 位置 | 计划改动 |
 |---|---|
-| `src/srm27_robot_description/`（新增） | SRM 公共几何/外参、模型生成、独立本地 mesh |
+| `src/simulation/srm27_robot_description/`（新增） | SRM 公共几何/外参、模型生成、独立本地 mesh |
 | 自转测试参数与状态 | 波形使用 launch/YAML 参数，速度统一 Twist；状态优先使用标准诊断消息，不为速度新增消息包 |
-| `src/srm27_chassis_control/`（新增） | mux、导航角速度过滤、自转命令生成与守护线程超时清零 |
-| `src/srm27_gazebo_simulator/`（新增） | SRM SDF、自有速度插件与调试真值输出；复用现有传感器桥接 |
+| `src/controller/srm27_chassis_control/`（新增） | mux、导航角速度过滤、自转命令生成与守护线程超时清零 |
+| `src/simulation/srm27_gazebo_simulator/`（新增） | SRM SDF、自有速度插件与调试真值输出；复用现有传感器桥接 |
 | `srm27_nav_bringup/launch/nav_srm_simulation_launch.py`（新增） | 复用现有点云、定位和 Nav2 启动链路，接入 SRM 模型与速度执行 |
 | `srm27_nav_bringup/config/simulation/nav2_params_srm.yaml`（新增） | 复用现有传感器和定位参数，调整 SRM frame、平移控制、自转隔离参数 |
 | `srm27_nav_bringup/launch/navigation_launch.py` | 将 fake_vel_transform 变为可选；给命令出口和 mux 留出配置，覆盖 composition 两条启动分支 |

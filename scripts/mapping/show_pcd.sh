@@ -38,7 +38,7 @@ PCD_DIR="$WS_DIR/maps/pcd"
 SETUP_FILE="$WS_DIR/install/setup.bash"
 
 MAP_DIR="$WS_DIR/maps"
-RVZ_CFG_SRC="$WS_DIR/src/srm27_navigation/srm27_nav_bringup/rviz/pcd_view.rviz"
+RVZ_CFG_SRC="$WS_DIR/src/bringup/srm27_nav_bringup/rviz/pcd_view.rviz"
 RVZ_CFG_INST="$WS_DIR/install/srm27_nav_bringup/share/srm27_nav_bringup/rviz/pcd_view.rviz"
 
 # ---------- 参数 ----------

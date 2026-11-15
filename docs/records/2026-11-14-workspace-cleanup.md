@@ -3,13 +3,15 @@
 > 状态：已完成
 > 范围：`/home/srm/srm_nav_27` 工作区结构、运行数据、脚本、launch/config、文档、Git 忽略规则
 > 未改动：ROS 包物理层级（`src/srm27_navigation` 不拆）、核心算法与正式测试
+> 2026-11-15 追加：ROS 包目录已按“七模块 + 支撑层”重组，见
+> [`2026-11-15-module-reorg.md`](2026-11-15-module-reorg.md)；本文中“未拆分 src”的描述仅代表 2026-11-14 当时状态。
 
 ## 1. 为什么做
 
 清理前，功能代码、兼容链路、一次性脚本、实验数据、历史文档混在同一层：
 
 - `log_diag/` 约 23 GB，全部是建图录包和建图日志；
-- `src/srm27_navigation/point_lio/PCD/` 约 890 MB 运行生成点云；
+- `src/perception_localization/frontend/point_lio/PCD/` 约 890 MB 运行生成点云；
 - `user_test_log/` 约 99 MB 实验 CSV/PNG；
 - `.mapcheck/`、`.tmp_diag/`、`.tmp_roslog/` 中有已提交的临时脚本和结果；
 - `scripts/` 28 个脚本平铺；`docs/` 31 篇文档没有状态区分；
@@ -159,7 +161,7 @@ colcon test --packages-select srm27_nav_bringup
 2. ~~对 `~/srm_nav_27_data/bags/` 做去重/保留策略~~（已按用户确认删除全部 9 份，2026-11-14）。
 3. ~~删除脚本兼容链接并同步更新 `test_cli_parity.py` 路径常量~~（已完成，2026-11-14）。
 4. ~~诊断探针脚本清理~~（已完成；`scripts/diagnostics/` 与 `inject_recovery_stuck.py` 已删）。
-5. 评估是否把 `src/srm27_navigation` 拆成 `src/navigation/` 等物理层级（本轮明确不做）。
+5. ~~评估是否把 `src/srm27_navigation` 拆成 `src/navigation/` 等物理层级~~（2026-11-15 已按模块重组，见 [`2026-11-15-module-reorg.md`](2026-11-15-module-reorg.md)）。
 6. `docs/archive/` 中仍有一些 AI 生成的长文，后续按“是否还有引用价值”逐篇决定保留/删除。
 
 ## 10. 回滚

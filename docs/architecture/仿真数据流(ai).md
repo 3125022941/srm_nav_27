@@ -22,8 +22,8 @@ ros2 launch srm27_gazebo_simulator srm_sim.launch.py
 ros2 launch srm27_nav_bringup nav_srm_simulation_launch.py \
   namespace:=red_standard_robot1 \
   world:=rmuc_2025 \
-  map:=$HOME/srm_nav_27/src/srm27_navigation/srm27_nav_bringup/map/simulation/rmuc_2025_tunnel.yaml \
-  params_file:=$HOME/srm_nav_27/src/srm27_navigation/srm27_nav_bringup/config/simulation/nav2_params_srm.yaml \
+  map:=$HOME/srm_nav_27/src/bringup/srm27_nav_bringup/map/simulation/rmuc_2025_tunnel.yaml \
+  params_file:=$HOME/srm_nav_27/src/bringup/srm27_nav_bringup/config/simulation/nav2_params_srm.yaml \
   slam:=False \
   use_pcd_localization:=False
 ```

@@ -1,13 +1,9 @@
 repositories:
+  src/decision/srm27_behavior:
+    type: git
+    url: https://github.com/SMBU-PolarBear-Robotics-Team/pb2025_sentry_behavior.git
+    version: main
   src/dependencies/BehaviorTree.ROS2:
     type: git
     url: https://github.com/SMBU-PolarBear-Robotics-Team/BehaviorTree.ROS2.git
     version: humble
-  src/srm27_navigation:
-    type: git
-    url: https://github.com/SMBU-PolarBear-Robotics-Team/pb2025_sentry_nav.git
-    version: main
-  src/srm27_behavior:
-    type: git
-    url: https://github.com/SMBU-PolarBear-Robotics-Team/pb2025_sentry_behavior.git
-    version: main

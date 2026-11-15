@@ -38,20 +38,20 @@ srm_cmd_mux ◄── rotation_cmd（决策层底盘自转，只取 angular.z）
 
 ## 包分层
 
-| 层 | 路径 | 说明 |
+| 模块 | 路径 | 说明 |
 |---|---|---|
-| 决策 | `src/srm27_behavior` | 行为树、BT 插件、任务参数 |
-| 导航 | `src/srm27_navigation` | `srm27_nav_bringup`（launch/参数/地图/RViz）、`srm27_minco_core`、`srm27_minco_controller`、`srm27_nav_plugins`、`point_lio`、`fake_vel_transform`、`small_gicp_relocalization`、`sensor_scan_generation` 等 |
-| 定位前端 | `src/frontend`、`src/localization_interfaces` | ZLIO 前端与重置/定位接口 |
-| 底盘 | `src/srm27_chassis_control` | 速度合成、限幅、看门狗（`srm_cmd_mux`） |
-| 下位机通信 | `src/srm27_nav_protocol` | 串口协议、速度反馈、底盘状态 |
-| 模型 | `src/srm27_robot_description` | URDF/xacro、雷达/云台外参（实车与仿真共用一份模型） |
-| 仿真 | `src/srm27_gazebo_simulator` | Gazebo 世界、SRM 模型、传感器桥、速度适配 |
-| 接口 | `src/interfaces` | 决策/自定义消息接口 |
-| 依赖 | `src/dependencies` | BehaviorTree.ROS2 等第三方；`dependencies.repos` 记录来源 |
+| 接口 | `src/interfaces` | `localization_interfaces`、`rm_decision_interfaces` |
+| 感知定位 | `src/perception_localization` | frontend: `frontend`(ZLIO)、`point_lio`、`livox_ros_driver2`、`loam_interface`、`pointcloud_to_laserscan`；backend: `small_gicp_relocalization`、`sensor_scan_generation` |
+| 轨迹规划 | `src/trajectory_planning` | frontend: `terrain_analysis`、`terrain_analysis_ext`、`srm27_nav_plugins`；backend: `srm27_minco_core`、`srm27_minco_vendor`、`srm27_qpoases_vendor` |
+| 控制器 | `src/controller` | `srm27_minco_controller`、`srm27_omni_pid_controller`、`fake_vel_transform`、`srm27_chassis_control`、`srm27_nav_protocol`、`srm27_teleop_twist_joy` |
+| 决策 | `src/decision` | `srm27_behavior` |
+| 仿真 | `src/simulation` | `srm27_gazebo_simulator`、`srm27_robot_description`、`ign_sim_pointcloud_tool` |
+| 装配 | `src/bringup` | `srm27_nav_bringup`、`srm27_navigation` 元包 |
+| 依赖 | `src/dependencies` | `BehaviorTree.ROS2` |
 
-> 本轮**没有**物理拆分 `src/srm27_navigation` 的 ROS 包；包路径与构建缓存保持原样。
-> 目录边界与后续拆分建议见入口表和工作区清理记录。
+> 七个业务模块：感知定位前端/后端、轨迹规划前端/后端、控制器、决策、仿真；
+> `interfaces`、`bringup`、`dependencies` 是支撑目录。ROS 包名没有改，只调整了目录归属。
+> 每个包的输入/输出与路径见 [ROS 包清点](docs/architecture/package_inventory.md)。
 
 ## 四个正式入口
 

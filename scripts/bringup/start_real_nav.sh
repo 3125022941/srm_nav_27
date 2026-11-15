@@ -50,13 +50,13 @@
 #     默认就接上，RViz 里的底盘朝向才跟手。
 #
 # 速度限幅 (控制器 / 平滑器 / mux / 恢复行为) 的**唯一来源**:
-#   src/srm27_navigation/srm27_nav_bringup/config/real/speed_limits.yaml
+#   src/bringup/srm27_nav_bringup/config/real/speed_limits.yaml
 #   launch 启动时把它合并进 nav2_params_srm*.yaml 与 srm_chassis_control.yaml
 #   (参数文件里不再写这些键; 两处都写且值不同 -> 启动直接报错)。
 #   串口限幅仍在 srm27_nav_protocol 自己的 config 里 (而且限幅作用在 linear_velocity_scale
 #   缩放**之后**)。
 #   改档位只改那一份; 改完先跑自检看"卡住速度的是哪一层", 再按下面的预检清单复核:
-#     python3 src/srm27_navigation/srm27_nav_bringup/scripts/srm_speed_limits_check.py
+#     python3 src/bringup/srm27_nav_bringup/scripts/srm_speed_limits_check.py
 # 详见 docs/导航速度调试指南.md §1/§2。
 #
 # ⚠ 安全须知 (务必先读):
@@ -231,7 +231,7 @@ DATA_DIR="${SRM27_DATA_DIR:-$HOME/srm_nav_27_data}"
 # 关掉: SRM_KEEP_MVS_LIB_PATH=1；额外剔除: SRM_LIB_PATH_STRIP_EXTRA=/p1,/p2
 . "$SCRIPT_DIR/../lib/srm_lib_path_guard.sh"
 
-PKG_SRC="$WS_DIR/src/srm27_navigation/srm27_nav_bringup"
+PKG_SRC="$WS_DIR/src/bringup/srm27_nav_bringup"
 PKG_INSTALL="$WS_DIR/install/srm27_nav_bringup/share/srm27_nav_bringup"
 # 优先用安装后的 share 目录 (launch 运行时 get_package_share_directory 返回的就是它),
 # 找不到再退回源码目录 (未编译时也能做 --check / --list-maps)。
@@ -1256,7 +1256,7 @@ if [ "$CONTROLLER" = "minco" ]; then
   PREFLIGHT_PY="$PKG_SRC/scripts/srm_minco_real_preflight.py"
   [ -f "$PREFLIGHT_PY" ] || PREFLIGHT_PY="$PKG_DIR/scripts/srm_minco_real_preflight.py"
   if [ -f "$PREFLIGHT_PY" ] && command -v python3 >/dev/null 2>&1; then
-    PROTOCOL_CFG_FOR_PREFLIGHT="$WS_DIR/src/srm27_nav_protocol/config/srm27_nav_protocol.yaml"
+    PROTOCOL_CFG_FOR_PREFLIGHT="$WS_DIR/src/controller/srm27_nav_protocol/config/srm27_nav_protocol.yaml"
     PREFLIGHT_ARGS=(--params "$PARAMS_FILE" --expect-minco)
     [ -f "$PROTOCOL_CFG_FOR_PREFLIGHT" ] && PREFLIGHT_ARGS+=(--protocol "$PROTOCOL_CFG_FOR_PREFLIGHT")
     if ! python3 "$PREFLIGHT_PY" "${PREFLIGHT_ARGS[@]}"; then
@@ -1394,7 +1394,7 @@ fi
 
 # 底盘串口: 设备存在性与权限, 只告警不阻断 (车可能还没插上 / 只做链路验证)
 if [ "$USE_CHASSIS" = "1" ]; then
-  PROTOCOL_CFG="$WS_DIR/src/srm27_nav_protocol/config/srm27_nav_protocol.yaml"
+  PROTOCOL_CFG="$WS_DIR/src/controller/srm27_nav_protocol/config/srm27_nav_protocol.yaml"
   [ -f "$PROTOCOL_CFG" ] || PROTOCOL_CFG="$WS_DIR/install/srm27_nav_protocol/share/srm27_nav_protocol/config/srm27_nav_protocol.yaml"
   SERIAL_DEV=""
   if [ -f "$PROTOCOL_CFG" ]; then
@@ -1962,7 +1962,7 @@ cat <<'EOF'
   6) 速度没有被任何一层静默钳住: /cmd_vel_chassis 的合速度能达到
      min(controllers limits, velocity_smoother, mux v_max, 串口 max_vx) 的 90% 以上。
      想知道"是哪一层卡住"，跑:
-       python3 src/srm27_navigation/srm27_nav_bringup/scripts/srm_speed_limits_check.py
+       python3 src/bringup/srm27_nav_bringup/scripts/srm_speed_limits_check.py
 EOF
 else
 cat <<'EOF'

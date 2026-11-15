@@ -207,7 +207,7 @@ if [ "$ACTION" = "view" ]; then
 fi
 
 # ---------------------------------------------------------------- 启动
-[ -n "$PARAMS_FILE" ] || PARAMS_FILE="$WS_DIR/src/srm27_navigation/srm27_nav_bringup/config/simulation/nav2_params_srm.yaml"
+[ -n "$PARAMS_FILE" ] || PARAMS_FILE="$WS_DIR/src/bringup/srm27_nav_bringup/config/simulation/nav2_params_srm.yaml"
 [ -f "$PARAMS_FILE" ] || die "参数文件不存在: $PARAMS_FILE"
 
 if [ "$DRY_RUN" != "1" ] && ! command -v "$TERMINAL" >/dev/null 2>&1; then

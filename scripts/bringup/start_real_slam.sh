@@ -137,7 +137,7 @@ mkdir -p "$PCD_DATA_DIR"
 # 关掉: SRM_KEEP_MVS_LIB_PATH=1；额外剔除: SRM_LIB_PATH_STRIP_EXTRA=/p1,/p2
 . "$SCRIPT_DIR/../lib/srm_lib_path_guard.sh"
 
-PKG_SRC="$WS_DIR/src/srm27_navigation/srm27_nav_bringup"
+PKG_SRC="$WS_DIR/src/bringup/srm27_nav_bringup"
 PKG_INSTALL="$WS_DIR/install/srm27_nav_bringup/share/srm27_nav_bringup"
 # 优先用安装后的 share 目录 (launch 运行时 get_package_share_directory 返回的就是它),
 # 找不到再退回源码目录 (未编译时也能做 --check / --list-maps)。
@@ -825,7 +825,7 @@ fi
 
 # 底盘串口: 设备存在性与权限, 只告警不阻断 (车可能还没插上 / 只做链路验证)
 if is_true "$USE_CHASSIS" && [ "$DRY_RUN" != "1" ]; then
-  PROTOCOL_CFG="$WS_DIR/src/srm27_nav_protocol/config/srm27_nav_protocol.yaml"
+  PROTOCOL_CFG="$WS_DIR/src/controller/srm27_nav_protocol/config/srm27_nav_protocol.yaml"
   [ -f "$PROTOCOL_CFG" ] || PROTOCOL_CFG="$WS_DIR/install/srm27_nav_protocol/share/srm27_nav_protocol/config/srm27_nav_protocol.yaml"
   SERIAL_DEV=""
   if [ -f "$PROTOCOL_CFG" ]; then

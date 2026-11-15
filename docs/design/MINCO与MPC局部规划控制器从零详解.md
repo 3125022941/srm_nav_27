@@ -993,7 +993,7 @@ colcon test-result --verbose
 
 ```bash
 ./scripts/bringup/start_sim_nav.sh \
-  --params /home/srm/srm_nav_27/src/srm27_navigation/srm27_nav_bringup/config/simulation/nav2_params_srm_minco.yaml \
+  --params /home/srm/srm_nav_27/src/bringup/srm27_nav_bringup/config/simulation/nav2_params_srm_minco.yaml \
   --rotation-mode stop
 ```
 
@@ -1300,28 +1300,28 @@ worker 会填 `clearance_samples`，但没有完整生成/使用 `narrow_interva
 
 下一次打开代码时，先找到 `computeVelocityCommands()`，把每一步对应到“状态 → 地图 → 轨迹 → 参考 → QP → 速度输出”。能够独立说明每一步输入和输出，你就已经能沿着主线阅读这套局部规划与控制实现了。
 
-[controller]: ../src/srm27_navigation/srm27_minco_controller/src/minco_mpc_controller.cpp
-[worker]: ../src/srm27_navigation/srm27_minco_controller/src/planning_worker.cpp
-[state]: ../src/srm27_navigation/srm27_minco_controller/src/state_adapter.cpp
-[costmap]: ../src/srm27_navigation/srm27_minco_controller/src/costmap_adapter.cpp
-[yaw]: ../src/srm27_navigation/srm27_minco_controller/src/yaw_policy.cpp
-[esdf]: ../src/srm27_navigation/srm27_minco_core/src/esdf_2d.cpp
-[initializer]: ../src/srm27_navigation/srm27_minco_core/src/trajectory_initializer.cpp
-[trajectory]: ../src/srm27_navigation/srm27_minco_core/src/trajectory_2d.cpp
-[optimizer]: ../src/srm27_navigation/srm27_minco_core/src/minco_optimizer.cpp
-[validator]: ../src/srm27_navigation/srm27_minco_core/src/trajectory_validator.cpp
-[reference]: ../src/srm27_navigation/srm27_minco_core/src/tracking_reference.cpp
-[model]: ../src/srm27_navigation/srm27_minco_core/src/mpc_model.cpp
-[solver]: ../src/srm27_navigation/srm27_minco_core/src/mpc_solver.cpp
-[replan]: ../src/srm27_navigation/srm27_minco_core/src/replan_manager.cpp
-[kinematics]: ../src/srm27_navigation/srm27_minco_core/include/srm27_minco_core/kinematics.hpp
-[mux]: ../src/srm27_chassis_control/src/cmd_mux_node.cpp
-[sim-config]: ../src/srm27_navigation/srm27_nav_bringup/config/simulation/nav2_params_srm_minco.yaml
-[startup-test]: ../src/srm27_navigation/srm27_minco_core/test/test_mpc_startup.cpp
-[trajectory-test]: ../src/srm27_navigation/srm27_minco_core/test/test_trajectory_2d.cpp
-[esdf-test]: ../src/srm27_navigation/srm27_minco_core/test/test_esdf_2d.cpp
-[optimizer-test]: ../src/srm27_navigation/srm27_minco_core/test/test_minco_optimizer.cpp
-[validator-test]: ../src/srm27_navigation/srm27_minco_core/test/test_trajectory_validator.cpp
-[reference-test]: ../src/srm27_navigation/srm27_minco_core/test/test_tracking_reference.cpp
-[solver-test]: ../src/srm27_navigation/srm27_minco_core/test/test_mpc_solver.cpp
-[state-test]: ../src/srm27_navigation/srm27_minco_controller/test/test_state_adapter.cpp
+[controller]: ../src/controller/srm27_minco_controller/src/minco_mpc_controller.cpp
+[worker]: ../src/controller/srm27_minco_controller/src/planning_worker.cpp
+[state]: ../src/controller/srm27_minco_controller/src/state_adapter.cpp
+[costmap]: ../src/controller/srm27_minco_controller/src/costmap_adapter.cpp
+[yaw]: ../src/controller/srm27_minco_controller/src/yaw_policy.cpp
+[esdf]: ../src/trajectory_planning/backend/srm27_minco_core/src/esdf_2d.cpp
+[initializer]: ../src/trajectory_planning/backend/srm27_minco_core/src/trajectory_initializer.cpp
+[trajectory]: ../src/trajectory_planning/backend/srm27_minco_core/src/trajectory_2d.cpp
+[optimizer]: ../src/trajectory_planning/backend/srm27_minco_core/src/minco_optimizer.cpp
+[validator]: ../src/trajectory_planning/backend/srm27_minco_core/src/trajectory_validator.cpp
+[reference]: ../src/trajectory_planning/backend/srm27_minco_core/src/tracking_reference.cpp
+[model]: ../src/trajectory_planning/backend/srm27_minco_core/src/mpc_model.cpp
+[solver]: ../src/trajectory_planning/backend/srm27_minco_core/src/mpc_solver.cpp
+[replan]: ../src/trajectory_planning/backend/srm27_minco_core/src/replan_manager.cpp
+[kinematics]: ../src/trajectory_planning/backend/srm27_minco_core/include/srm27_minco_core/kinematics.hpp
+[mux]: ../src/controller/srm27_chassis_control/src/cmd_mux_node.cpp
+[sim-config]: ../src/bringup/srm27_nav_bringup/config/simulation/nav2_params_srm_minco.yaml
+[startup-test]: ../src/trajectory_planning/backend/srm27_minco_core/test/test_mpc_startup.cpp
+[trajectory-test]: ../src/trajectory_planning/backend/srm27_minco_core/test/test_trajectory_2d.cpp
+[esdf-test]: ../src/trajectory_planning/backend/srm27_minco_core/test/test_esdf_2d.cpp
+[optimizer-test]: ../src/trajectory_planning/backend/srm27_minco_core/test/test_minco_optimizer.cpp
+[validator-test]: ../src/trajectory_planning/backend/srm27_minco_core/test/test_trajectory_validator.cpp
+[reference-test]: ../src/trajectory_planning/backend/srm27_minco_core/test/test_tracking_reference.cpp
+[solver-test]: ../src/trajectory_planning/backend/srm27_minco_core/test/test_mpc_solver.cpp
+[state-test]: ../src/controller/srm27_minco_controller/test/test_state_adapter.cpp

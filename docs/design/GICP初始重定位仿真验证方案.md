@@ -334,10 +334,10 @@ S3/S4 扰动放在明确的数据入口：第一级修改 GICP 输入点云，�
 
 ## 12. 源码依据
 
-- [GICP 实现](../../src/srm27_navigation/small_gicp_relocalization/src/small_gicp_relocalization.cpp)：地图加载变换、输入系检查、初值换算、接受门限和 TF 发布。
-- [SRM 仿真导航入口](../../src/srm27_navigation/srm27_nav_bringup/launch/nav_srm_simulation_launch.py)：GICP/Point-LIO/真值模式选择。
-- [定位启动文件](../../src/srm27_navigation/srm27_nav_bringup/launch/localization_launch.py)：GICP 启动、Point-LIO 先验关闭、静态 TF 互斥。
-- [导航启动文件](../../src/srm27_navigation/srm27_nav_bringup/launch/navigation_launch.py)：定位模式下里程计与 `odom → base_link` 发布配置。
-- [仿真参数基线](../../src/srm27_navigation/srm27_nav_bringup/config/simulation/nav2_params_srm.yaml)。
-- [仿真配置](../../src/srm27_gazebo_simulator/config/srm_sim.yaml)与[桥接配置](../../src/srm27_gazebo_simulator/config/ros_gz_bridge.yaml)。
-- [机器人几何与雷达外参](../../src/srm27_robot_description/config/srm27_sentry_geometry.yaml)。
+- [GICP 实现](../../src/perception_localization/backend/small_gicp_relocalization/src/small_gicp_relocalization.cpp)：地图加载变换、输入系检查、初值换算、接受门限和 TF 发布。
+- [SRM 仿真导航入口](../../src/bringup/srm27_nav_bringup/launch/nav_srm_simulation_launch.py)：GICP/Point-LIO/真值模式选择。
+- [定位启动文件](../../src/bringup/srm27_nav_bringup/launch/localization_launch.py)：GICP 启动、Point-LIO 先验关闭、静态 TF 互斥。
+- [导航启动文件](../../src/bringup/srm27_nav_bringup/launch/navigation_launch.py)：定位模式下里程计与 `odom → base_link` 发布配置。
+- [仿真参数基线](../../src/bringup/srm27_nav_bringup/config/simulation/nav2_params_srm.yaml)。
+- [仿真配置](../../src/simulation/srm27_gazebo_simulator/config/srm_sim.yaml)与[桥接配置](../../src/simulation/srm27_gazebo_simulator/config/ros_gz_bridge.yaml)。
+- [机器人几何与雷达外参](../../src/simulation/srm27_robot_description/config/srm27_sentry_geometry.yaml)。

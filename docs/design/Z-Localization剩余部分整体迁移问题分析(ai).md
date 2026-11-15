@@ -15,9 +15,9 @@
 | --- | --- | --- | --- |
 | `src/backend` | 122 文件 / 22 927 行（含 `include` `src` `apps` `tools`）+ 3 260 行测试，1.9 MB | **无** | 7 个可执行：`backend_node` + 6 个地图/标定工具；1 个核心库 `backend_core` |
 | `src/bringup` | 4 文件 | **无** | 一个"一键起前后端"的 launch，只包含 `frontend`/`backend`/`livox_ros_driver2` 三个 include |
-| `src/livox_ros_driver2` | 1.1 MB | **已有同名包**：`src/srm27_navigation/livox_ros_driver2` | 无（迁不进来，见 §1 的 A1） |
+| `src/livox_ros_driver2` | 1.1 MB | **已有同名包**：`src/perception_localization/frontend/livox_ros_driver2` | 无（迁不进来，见 §1 的 A1） |
 
-已迁部分的迁法可以参考：[frontend/CMakeLists.txt:4–8](../../src/frontend/CMakeLists.txt#L4-L8) 记着当时的改造——
+已迁部分的迁法可以参考：[frontend/CMakeLists.txt:4–8](../../src/perception_localization/frontend/frontend/CMakeLists.txt#L4-L8) 记着当时的改造——
 "警告规则、算法配置与授权文件都在仓库根目录（`../../cmake`、`../../config`、`../../LICENSE`），
 并入本工作空间后改为**包内自持**"。backend 有一模一样的问题（且更严重，见 §1 的 A3）。
 
@@ -33,7 +33,7 @@
 
 ### A1 `livox_ros_driver2` 同名包已存在，迁入即重名
 
-本仓库已经有 `src/srm27_navigation/livox_ros_driver2`（v1.1.0），且 `frontend`、`point_lio`、
+本仓库已经有 `src/perception_localization/frontend/livox_ros_driver2`（v1.1.0），且 `frontend`、`point_lio`、
 `srm27_nav_bringup` 三个包都 `depend` 它。colcon **不支持两个同名包**，上游那份必须整份跳过。
 
 这不是新发现——实施记录里已经写明"本仓库 v1.1.0 已满足，`msg/` 两边 `diff -r` 为空，
@@ -42,7 +42,7 @@
 
 但"跳过上游那份"不等于"没有差异"。实际 diff 出来的两处差异，正好都是 `bringup` 会踩到的：
 
-| 项 | 上游 `src/livox_ros_driver2` | 本仓库 `src/srm27_navigation/livox_ros_driver2` |
+| 项 | 上游 `src/livox_ros_driver2` | 本仓库 `src/perception_localization/frontend/livox_ros_driver2` |
 | --- | --- | --- |
 | launch 目录名 | `launch_ROS2/` | `launch/` |
 | `msg_MID360_launch.py` 的 `xfer_format` | `1`（只发 `livox/lidar` CustomMsg） | `4`（`kAllMsg`：`livox/lidar` 发 CustomMsg，**另加** `livox/lidar/pointcloud` 发 PointCloud2） |
@@ -124,7 +124,7 @@ PathJoinSubstitution([FindPackageShare('livox_ros_driver2'), 'launch_ROS2', 'msg
 
 | 模式 | `map→odom` 发布者 | 出处 |
 | --- | --- | --- |
-| `--lio` / 实车默认 | `tf2_ros static_transform_publisher`（2D 静态恒等或 `--init-pose`） | [localization_launch.py:340–352](../../src/srm27_navigation/srm27_nav_bringup/launch/localization_launch.py#L340-L352) |
+| `--lio` / 实车默认 | `tf2_ros static_transform_publisher`（2D 静态恒等或 `--init-pose`） | [localization_launch.py:340–352](../../src/bringup/srm27_nav_bringup/launch/localization_launch.py#L340-L352) |
 | `--gicp` | `small_gicp_relocalization`（20 Hz，平面化） | `src/small_gicp_relocalization.cpp:724` |
 | `--slam` | `slam_toolbox` | `start_real_slam.sh` 文件头第 6 步 |
 
@@ -145,14 +145,14 @@ RViz 与 Nav2 会看到两个互不相关的全局位姿源。**必须显式关�
 
 两个 `odom` 不是同一个坐标系：
 
-1. **ZLIO 自己的世界系**。`src/frontend/src/initialization.cpp` 的 `alignGravity()` 会把世界系旋转到
+1. **ZLIO 自己的世界系**。`src/perception_localization/frontend/frontend/src/initialization.cpp` 的 `alignGravity()` 会把世界系旋转到
    重力朝 `-Z`，于是首帧位姿 `R_0` **不是单位阵**。仿真里雷达装 30° roll，`R_0` 就带 30°。
-   前端 `world_frame` 参数被本仓库填成 `"odom"`（[localization_launch.py:309](../../src/srm27_navigation/srm27_nav_bringup/launch/localization_launch.py#L309)），
+   前端 `world_frame` 参数被本仓库填成 `"odom"`（[localization_launch.py:309](../../src/bringup/srm27_nav_bringup/launch/localization_launch.py#L309)），
    **但只是贴了个标签**，几何上它不是 `odom`。
 2. **本仓库的 `odom`**，由 `zlio_bridge` 定义：`T_odom←lidar(k) = T_off · R_k`，
    `T_off = M · R_0⁻¹`（`M = TF(base_link ← lidar)`，首帧查询），所以 `T_odom←lidar(0) = M`，
    即 **`odom` 的原点/轴向 = 出生时的 `base_link`**
-   （[zlio_bridge.py:45](../../src/srm27_navigation/srm27_nav_bringup/scripts/zlio_bridge.py#L45)、`:534`、`:603`）。
+   （[zlio_bridge.py:45](../../src/bringup/srm27_nav_bringup/scripts/zlio_bridge.py#L45)、`:534`、`:603`）。
 
 两者相差 `T_off`：`T_odom←zlodom = T_off`。
 
@@ -179,7 +179,7 @@ RViz 与 Nav2 会看到两个互不相关的全局位姿源。**必须显式关�
 本仓库的车**雷达挂在 yaw 云台上**，`sensor_scan_generation` 的做法是**每帧查实时 TF**
 `base_link ← livox_imu`：
 
-- [nav2_params_srm_minco_fakeyaw.yaml:158–164](../../src/srm27_navigation/srm27_nav_bringup/config/real/nav2_params_srm_minco_fakeyaw.yaml#L158-L164)
+- [nav2_params_srm_minco_fakeyaw.yaml:158–164](../../src/bringup/srm27_nav_bringup/config/real/nav2_params_srm_minco_fakeyaw.yaml#L158-L164)
   的 `sensor_scan_generation.lidar_frame: "livox_imu"` / `base_frame: "base_link"`，
 - 实车入口还专门起 `gimbal_joint_state_relay` 把关节角回传进 TF
   （`nav_srm_real_launch.py:371-382`）。
@@ -203,7 +203,7 @@ RViz 与 Nav2 会看到两个互不相关的全局位姿源。**必须显式关�
 
 - `zlio_bridge` 的 `anchor_on_epoch_change`（默认 `True`）：换代时
   `T_off ← T_off · R_last_old · R_first_new⁻¹`，保证 `odom` 连续
-  （[`zlio_bridge.py:292`](../../src/srm27_navigation/srm27_nav_bringup/scripts/zlio_bridge.py) 与 `:603`）。
+  （[`zlio_bridge.py:292`](../../src/bringup/srm27_nav_bringup/scripts/zlio_bridge.py) 与 `:603`）。
 
 而 `backend` 自带一套完整的换代/重置协议：`FrontendSession` 的 `instance/epoch/reset_required/failed`、
 `/localization_reset`（`config/backend.yaml` 的 `services.reset`）、`/zlio/reset_internal`
@@ -221,7 +221,7 @@ RViz 与 Nav2 会看到两个互不相关的全局位姿源。**必须显式关�
 
 ### B5 `coordinated_reset` 必须从 `false` 翻成 `true`，翻了之后的连锁反应
 
-现在写的是（[`localization_launch.py:311-314`](../../src/srm27_navigation/srm27_nav_bringup/launch/localization_launch.py)）：
+现在写的是（[`localization_launch.py:311-314`](../../src/bringup/srm27_nav_bringup/launch/localization_launch.py)）：
 
 ```python
 # warm 重置保留速度/倾角/零偏；coordinated_reset 必须 false —— 本链路没有后端，
@@ -230,7 +230,7 @@ RViz 与 Nav2 会看到两个互不相关的全局位姿源。**必须显式关�
 {"coordinated_reset": False},
 ```
 
-`coordinated_reset` 的语义（`src/frontend/apps/node.cpp:331-350`）是：
+`coordinated_reset` 的语义（`src/perception_localization/frontend/frontend/apps/node.cpp:331-350`）是：
 输入中断后，`true` → 只把 `reset_required` 置起来等后端来协调（`:346-348`）；
 `false` → **前端自己给自己发一次 `ResetFrontend` 并直接换代**（`:349-353`）。
 

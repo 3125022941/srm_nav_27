@@ -12,13 +12,13 @@
 Theta* 全局路径规划 → OmniPidPursuitController 路径跟踪 → Velocity Smoother → cmd_vel
 ```
 
-项目 README 写的是默认 Global Planner，但当前仿真和实车配置实际明确使用了 ThetaStarPlanner（见 `src/srm27_navigation/srm27_nav_bringup/config/simulation/nav2_params.yaml`）。
+项目 README 写的是默认 Global Planner，但当前仿真和实车配置实际明确使用了 ThetaStarPlanner（见 `src/bringup/srm27_nav_bringup/config/simulation/nav2_params.yaml`）。
 
 ## 当前局部控制流程
 
-1. ControllerServer 以 20 Hz 调用自定义控制器（见 `src/srm27_navigation/srm27_nav_bringup/config/simulation/nav2_params.yaml`）。
+1. ControllerServer 以 20 Hz 调用自定义控制器（见 `src/bringup/srm27_nav_bringup/config/simulation/nav2_params.yaml`）。
 
-2. 将全局路径变换到 gimbal_yaw_fake 坐标系，只保留局部代价地图范围内的部分，并删除已经走过的路径点（见 `src/srm27_navigation/srm27_omni_pid_controller/src/omni_pid_pursuit_controller.cpp`）。
+2. 将全局路径变换到 gimbal_yaw_fake 坐标系，只保留局部代价地图范围内的部分，并删除已经走过的路径点（见 `src/controller/srm27_omni_pid_controller/src/omni_pid_pursuit_controller.cpp`）。
 
 3. 根据速度计算前视距离：
 
@@ -37,11 +37,11 @@ Theta* 全局路径规划 → OmniPidPursuitController 路径跟踪 → Velocity
    vy = v × sin(theta)
    ```
 
-   因此它支持横移，适合全向底盘（见 `src/srm27_navigation/srm27_omni_pid_controller/src/omni_pid_pursuit_controller.cpp`）。
+   因此它支持横移，适合全向底盘（见 `src/controller/srm27_omni_pid_controller/src/omni_pid_pursuit_controller.cpp`）。
 
 6. 根据三点拟合曲率，在弯道减速；接近目标时进一步减速。
 
-7. 从局部路径中抽取 10 个点进行代价地图碰撞检查；若碰撞则抛出异常，交给 Nav2 的恢复行为或重新规划（见 `src/srm27_navigation/srm27_omni_pid_controller/src/omni_pid_pursuit_controller.cpp`）。
+7. 从局部路径中抽取 10 个点进行代价地图碰撞检查；若碰撞则抛出异常，交给 Nav2 的恢复行为或重新规划（见 `src/controller/srm27_omni_pid_controller/src/omni_pid_pursuit_controller.cpp`）。
 
 所以它本质上是：
 
@@ -55,7 +55,7 @@ Theta* 全局路径规划 → OmniPidPursuitController 路径跟踪 → Velocity
 - `use_rotate_to_heading: false`
 - `yaw_goal_tolerance: 6.28`
 
-因此实际运行时基本只控制平移，不控制最终朝向（见 `src/srm27_navigation/srm27_nav_bringup/config/simulation/nav2_params.yaml`）。
+因此实际运行时基本只控制平移，不控制最终朝向（见 `src/bringup/srm27_nav_bringup/config/simulation/nav2_params.yaml`）。
 
 ## 优点
 

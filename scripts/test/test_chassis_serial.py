@@ -83,7 +83,7 @@
 #   - 帧头 5 字节之后**直接**是数据段, 本方向没有 cmd_id, 不要插字节。
 #   - crc8 : CRC8_table, init 0xFF, 覆盖偏移 0-3, 放在偏移 4
 #   - crc16: wCRC_table, init 0xFFFF, 覆盖偏移 0-16 (17 字节), 小端放在 17-18
-#   两张表逐字节取自 src/srm27_nav_protocol/src/crc_func.c。
+#   两张表逐字节取自 src/controller/srm27_nav_protocol/src/crc_func.c。
 #
 # 结果怎么读 (本脚本只看车动没动, 不读回传):
 #   - 车动了   → 串口/接线/板子/电机/使能全通, 问题只在上位机软件层
@@ -95,7 +95,7 @@
 #   注释掉了, 即接收回调从未注册 —— 那种情况下无论帧多正确车都不会动,
 #   必须先恢复该行并重新编译烧录 C 板。
 #
-# ✅ 一致性: 上位机 ROS 节点 src/srm27_nav_protocol 发的也是同样的 19 字节帧
+# ✅ 一致性: 上位机 ROS 节点 src/controller/srm27_nav_protocol 发的也是同样的 19 字节帧
 #   (data_length=12)。两边的打包结果已逐字节比对一致, 且都等于协议 §5 的
 #   三条参考向量 —— 所以"脚本能开车、ROS 节点也能开"。
 #   历史提醒: 该节点曾经多发一个 is_recovering 字节 (整帧 20 字节 / len=13),
@@ -123,7 +123,7 @@ except ImportError:  # pragma: no cover
     raise SystemExit(2)
 
 # ---------------------------------------------------------------
-# CRC 表: 逐字节取自 src/srm27_nav_protocol/src/crc_func.c
+# CRC 表: 逐字节取自 src/controller/srm27_nav_protocol/src/crc_func.c
 # ---------------------------------------------------------------
 CRC8_TABLE_HEX = (
     "005EBCE2613FDD83C29C7E20A3FD1F419DC3217FFCA2401E5F01E3BD3E6082DC237D9FC1421CFEA0E1BF5D0380DE3C62BEE0025CDF81633D7C22C09E1D43A1FF4618FAA427799BC584DA3866E5BB5907DB856739BAE406581947A5FB7826C49A653BD987045AB8E6A7F91B45C6987A24F8A6441A99C7257B3A6486D85B05E7B98CD2306EEDB3510F4E10F2AC2F7193CD114FADF3702ECC92D38D6F31B2EC0E50AFF1134DCE90722C6D33D18F0C52B0EE326C8ED0530DEFB1F0AE4C1291CF2D73CA947628ABF517490856B4EA6937D58B5709EBB536688AD495CB2977F4AA4816E9B7550B88D6346A2B7597C94A14F6A8742AC896154BA9F7B6E80A54D7896B35"

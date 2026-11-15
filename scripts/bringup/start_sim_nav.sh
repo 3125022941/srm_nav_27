@@ -20,11 +20,11 @@
 #   (URDF gimbal_is_root:=true, 关节轴反号以匹配 Gazebo /joint_states)。
 #
 # 速度限幅 (控制器 / 平滑器 / mux / 恢复行为) 的**唯一来源**:
-#   src/srm27_navigation/srm27_nav_bringup/config/simulation/speed_limits.yaml
+#   src/bringup/srm27_nav_bringup/config/simulation/speed_limits.yaml
 #   launch 启动时把它合并进 nav2_params_srm*.yaml 与 srm_chassis_control.yaml,
 #   参数文件里不再写这些键 (两处都写且值不同 -> 启动直接报错)。
 #   改档位只改那一份; 改完用下面的自检看"卡住速度的是哪一层":
-#     python3 src/srm27_navigation/srm27_nav_bringup/scripts/srm_speed_limits_check.py
+#     python3 src/bringup/srm27_nav_bringup/scripts/srm_speed_limits_check.py
 # 详见 docs/导航速度调试指南.md §1/§2。
 #
 # 模式说明 (本脚本只做导航):
@@ -168,7 +168,7 @@
 #   - Gazebo 世界、SRM 初始位姿和速度参数统一由
 #     srm27_gazebo_simulator/config/srm_sim.yaml 给出; -w 会覆盖其中的 world。
 #   - 地图与参数文件一律使用绝对路径; 地图可直接给名字, 依次在
-#     src/srm27_navigation/srm27_nav_bringup/map/simulation/ 与工作空间根目录 maps/
+#     src/bringup/srm27_nav_bringup/map/simulation/ 与工作空间根目录 maps/
 #     (支持 maps/<名字>.yaml 与 maps/<名字>/<名字>.yaml) 下解析, 找不到会列出全部可用地图。
 #   - 每个标签页都会先 source 工作空间的 install/setup.bash。
 #   - 控制清单：导航速度 cmd_vel_nav_fake → cmd_vel_nav_body、执行命令 cmd_vel_sim、
@@ -181,8 +181,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 WS_DIR="${SRM27_WS_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 DATA_DIR="${SRM27_DATA_DIR:-$HOME/srm_nav_27_data}"
-PKG_SRC="$WS_DIR/src/srm27_navigation/srm27_nav_bringup"
-SIM_SRC="$WS_DIR/src/srm27_gazebo_simulator"
+PKG_SRC="$WS_DIR/src/bringup/srm27_nav_bringup"
+SIM_SRC="$WS_DIR/src/simulation/srm27_gazebo_simulator"
 
 # ---------- 可配置项 ----------
 OPEN_MODE="${OPEN_MODE:-tab}"                # tab: 同一窗口多标签页; window: 每命令独立窗口; direct: 无终端后台直启(日志在 .sim_run/logs/)
@@ -757,7 +757,7 @@ resolve_prior_pcd() {
         echo "[错误] --prior-pcd 指定的文件不存在: $name" >&2; return 1 ;;
   esac
   for dir in ${PRIOR_PCD_SEARCH_DIRS//:/ } "$WS_DIR/pcd/simulation" \
-             "$WS_DIR/src/srm27_navigation/srm27_nav_bringup/pcd/simulation"; do
+             "$WS_DIR/src/bringup/srm27_nav_bringup/pcd/simulation"; do
     [ -n "$dir" ] || continue
     if [ -f "$dir/$name" ]; then printf '%s' "$dir/$name"; return 0; fi
     if [ -f "$dir/$name.pcd" ]; then printf '%s' "$dir/$name.pcd"; return 0; fi

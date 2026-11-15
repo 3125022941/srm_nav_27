@@ -1,7 +1,7 @@
 # SRM27 启动入口矩阵（唯一入口表）
 
 > 状态：当前有效
-> 适用范围：本工作区 `src/srm27_navigation/srm27_nav_bringup`
+> 适用范围：本工作区 `src/bringup/srm27_nav_bringup`
 > 最后核对：2026-11-14
 >
 > 本文件是 launch 入口的**唯一权威表**。新增/修改入口时先改这里，再改代码；
@@ -58,7 +58,7 @@
 
 ## 2. launch 文件分类（16 个 canonical + 16 个前缀别名）
 
-路径均相对 `src/srm27_navigation/srm27_nav_bringup/launch/`。
+路径均相对 `src/bringup/srm27_nav_bringup/launch/`。
 
 ROS 2 的 `ros2 launch <pkg> <file>` 会在 `share/launch` 下按 **basename 递归搜索**；
 同一 basename 出现两次会直接报 `file ... was found more than once`。因此：
@@ -142,7 +142,7 @@ start_sim_slam.sh
 
 ## 5. 参数文件分类
 
-路径相对 `src/srm27_navigation/srm27_nav_bringup/config/`。分组目录是 canonical，
+路径相对 `src/bringup/srm27_nav_bringup/config/`。分组目录是 canonical，
 原路径是兼容符号链接。
 
 | 文件 | 状态 | 用途 |

@@ -1,4 +1,4 @@
-# ROS 包清点（2026-11-14）
+# ROS 包清点（2026-11-15）
 
 统计口径：`src/**/package.xml`，共 **29** 个 ROS 包。
 
@@ -13,42 +13,55 @@
 > `btcpp_ros2_samples`、旧总入口 `srm27_bringup`、`rosbag2_composable_recorder`。
 > `src/tools/` 已随工具包一起删除；`src/dependencies/` 现在只保留 BehaviorTree.ROS2。
 
+## 目录模块
+
+| 目录 | 包数 | 内容 |
+|---|---:|---|
+| `interfaces` | 2 | 定位协议、决策/裁判/云台消息 |
+| `perception_localization` | 7 | 前端 5 + 后端 2 |
+| `trajectory_planning` | 6 | 前端 3 + 后端 3 |
+| `controller` | 6 | 控制器、速度变换、底盘、串口、手柄 |
+| `decision` | 1 | 行为树 |
+| `simulation` | 3 | Gazebo、模型、仿真点云 |
+| `bringup` | 2 | Nav2 装配与导航元包 |
+| `dependencies` | 2 | BehaviorTree.ROS2 |
+
 ## 项目自有/维护（17）
 
 | 包 | 路径 | 角色 |
 |---|---|---|
-| `srm27_behavior` | `src/srm27_behavior` | 行为树、BT 插件、决策参数 |
-| `srm27_chassis_control` | `src/srm27_chassis_control` | `srm_cmd_mux`：速度合成、限幅、看门狗 |
-| `srm27_nav_protocol` | `src/srm27_nav_protocol` | 下位机串口协议、速度反馈 |
-| `srm27_robot_description` | `src/srm27_robot_description` | 实车/仿真共用 URDF/xacro、雷达/云台外参 |
-| `srm27_gazebo_simulator` | `src/srm27_gazebo_simulator` | Gazebo Fortress 世界、SRM 模型、速度执行插件 |
+| `srm27_behavior` | `src/decision/srm27_behavior` | 行为树、BT 插件、决策参数 |
+| `srm27_chassis_control` | `src/controller/srm27_chassis_control` | `srm_cmd_mux`：速度合成、限幅、看门狗 |
+| `srm27_nav_protocol` | `src/controller/srm27_nav_protocol` | 下位机串口协议、速度反馈 |
+| `srm27_robot_description` | `src/simulation/srm27_robot_description` | 实车/仿真共用 URDF/xacro、雷达/云台外参 |
+| `srm27_gazebo_simulator` | `src/simulation/srm27_gazebo_simulator` | Gazebo Fortress 世界、SRM 模型、速度执行插件 |
 | `rm_decision_interfaces` | `src/interfaces/rm_decision_interfaces` | 决策/裁判/云台消息接口 |
-| `localization_interfaces` | `src/localization_interfaces` | 前后端同步观测、会话身份、重置协议 |
-| `frontend` | `src/frontend` | ZLIO 激光惯性里程计前端 |
-| `srm27_navigation` | `src/srm27_navigation/srm27_navigation` | 导航包集合的元包 |
-| `srm27_nav_bringup` | `src/srm27_navigation/srm27_nav_bringup` | Nav2 启动、参数、地图、RViz、launch 契约测试 |
-| `srm27_minco_core` | `src/srm27_navigation/srm27_minco_core` | MINCO 轨迹优化 + MPC 纯算法核心 |
-| `srm27_minco_controller` | `src/srm27_navigation/srm27_minco_controller` | Nav2 FollowPath 控制器插件 |
-| `srm27_minco_vendor` | `src/srm27_navigation/srm27_minco_vendor` | vendored GCOPTER MINCO/L-BFGS |
-| `srm27_qpoases_vendor` | `src/srm27_navigation/srm27_qpoases_vendor` | vendored qpOASES |
-| `srm27_nav_plugins` | `src/srm27_navigation/srm27_nav_plugins` | 自研 Nav2 插件（判停、路线途经点、强度体素层） |
-| `srm27_omni_pid_controller` | `src/srm27_navigation/srm27_omni_pid_controller` | Omni Pure Pursuit 控制器（实车回退链） |
-| `srm27_teleop_twist_joy` | `src/srm27_navigation/srm27_teleop_twist_joy` | 底盘/云台手柄遥控 |
+| `localization_interfaces` | `src/interfaces/localization_interfaces` | 前后端同步观测、会话身份、重置协议 |
+| `frontend` | `src/perception_localization/frontend/frontend` | ZLIO 激光惯性里程计前端 |
+| `srm27_navigation` | `src/bringup/srm27_navigation` | 导航包集合的元包 |
+| `srm27_nav_bringup` | `src/bringup/srm27_nav_bringup` | Nav2 启动、参数、地图、RViz、launch 契约测试 |
+| `srm27_minco_core` | `src/trajectory_planning/backend/srm27_minco_core` | MINCO 轨迹优化 + MPC 纯算法核心 |
+| `srm27_minco_controller` | `src/controller/srm27_minco_controller` | Nav2 FollowPath 控制器插件 |
+| `srm27_minco_vendor` | `src/trajectory_planning/backend/srm27_minco_vendor` | vendored GCOPTER MINCO/L-BFGS |
+| `srm27_qpoases_vendor` | `src/trajectory_planning/backend/srm27_qpoases_vendor` | vendored qpOASES |
+| `srm27_nav_plugins` | `src/trajectory_planning/frontend/srm27_nav_plugins` | 自研 Nav2 插件（判停、路线途经点、强度体素层） |
+| `srm27_omni_pid_controller` | `src/controller/srm27_omni_pid_controller` | Omni Pure Pursuit 控制器（实车回退链） |
+| `srm27_teleop_twist_joy` | `src/controller/srm27_teleop_twist_joy` | 底盘/云台手柄遥控 |
 
 ## 集成/改造的第三方导航包（10）
 
 | 包 | 路径 | 说明 |
 |---|---|---|
-| `fake_vel_transform` | `src/srm27_navigation/fake_vel_transform` | 当前 fakeyaw 链路必需：`cmd_vel_nav_fake → cmd_vel_nav_body` |
-| `point_lio` | `src/srm27_navigation/point_lio` | Point-LIO 里程计/建图；PCD 输出已改运行期 `SRM27_PCD_DIR` |
-| `small_gicp_relocalization` | `src/srm27_navigation/small_gicp_relocalization` | 先验 PCD 的 GICP 重定位 |
-| `sensor_scan_generation` | `src/srm27_navigation/sensor_scan_generation` | 发布 `odom→gimbal_yaw` / `sensor_scan` |
-| `loam_interface` | `src/srm27_navigation/loam_interface` | Point-LIO 输出到 `registered_scan` 的适配 |
-| `pointcloud_to_laserscan` | `src/srm27_navigation/pointcloud_to_laserscan` | 3D 点云转 2D 扫描 |
-| `terrain_analysis` | `src/srm27_navigation/terrain_analysis` | 局部地形分析 |
-| `terrain_analysis_ext` | `src/srm27_navigation/terrain_analysis_ext` | 扩展地形分析 |
-| `ign_sim_pointcloud_tool` | `src/srm27_navigation/ign_sim_pointcloud_tool` | Gazebo 点云转 velodyne 格式 |
-| `livox_ros_driver2` | `src/srm27_navigation/livox_ros_driver2` | MID-360 驱动 |
+| `fake_vel_transform` | `src/controller/fake_vel_transform` | 当前 fakeyaw 链路必需：`cmd_vel_nav_fake → cmd_vel_nav_body` |
+| `point_lio` | `src/perception_localization/frontend/point_lio` | Point-LIO 里程计/建图；PCD 输出已改运行期 `SRM27_PCD_DIR` |
+| `small_gicp_relocalization` | `src/perception_localization/backend/small_gicp_relocalization` | 先验 PCD 的 GICP 重定位 |
+| `sensor_scan_generation` | `src/perception_localization/backend/sensor_scan_generation` | 发布 `odom→gimbal_yaw` / `sensor_scan` |
+| `loam_interface` | `src/perception_localization/frontend/loam_interface` | Point-LIO 输出到 `registered_scan` 的适配 |
+| `pointcloud_to_laserscan` | `src/perception_localization/frontend/pointcloud_to_laserscan` | 3D 点云转 2D 扫描 |
+| `terrain_analysis` | `src/trajectory_planning/frontend/terrain_analysis` | 局部地形分析 |
+| `terrain_analysis_ext` | `src/trajectory_planning/frontend/terrain_analysis_ext` | 扩展地形分析 |
+| `ign_sim_pointcloud_tool` | `src/simulation/ign_sim_pointcloud_tool` | Gazebo 点云转 velodyne 格式 |
+| `livox_ros_driver2` | `src/perception_localization/frontend/livox_ros_driver2` | MID-360 驱动 |
 
 ## 外部依赖（2）
 

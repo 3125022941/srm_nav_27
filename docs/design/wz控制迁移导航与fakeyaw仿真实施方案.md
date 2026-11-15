@@ -16,12 +16,12 @@
 
 本方案只改仿真和导航接口，不修改串口协议、下位机固件或实车启动默认值。
 
-现有实现的主要落点是：`src/srm27_navigation/fake_vel_transform/`、
-`src/srm27_chassis_control/src/cmd_mux_node.cpp`、
-`src/srm27_chassis_control/src/velocity_mix.cpp`、
-`src/srm27_navigation/srm27_minco_controller/src/minco_mpc_controller.cpp`、
-`src/srm27_navigation/srm27_nav_bringup/launch/navigation_launch.py` 和
-`src/srm27_navigation/srm27_nav_bringup/launch/nav_srm_simulation_launch.py`。
+现有实现的主要落点是：`src/controller/fake_vel_transform/`、
+`src/controller/srm27_chassis_control/src/cmd_mux_node.cpp`、
+`src/controller/srm27_chassis_control/src/velocity_mix.cpp`、
+`src/controller/srm27_minco_controller/src/minco_mpc_controller.cpp`、
+`src/bringup/srm27_nav_bringup/launch/navigation_launch.py` 和
+`src/bringup/srm27_nav_bringup/launch/nav_srm_simulation_launch.py`。
 实施时先在这些现有边界内扩展，避免另起一套速度节点。
 
 ## 2. 目标数据流

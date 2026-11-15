@@ -13,5 +13,6 @@
 | `TF与fake底盘详解(ai).md` | 旧步兵 fake 虚拟底盘/TF | 旧 `gimbal_yaw_fake`/`MecanumDrive2` 执行链已删除；`fake_vel_transform` 组件本身仍用于当前链路，见入口表 |
 | `tdt开源.md` | TDT 上游算法调研 | 调研时的链路图/入口已过时，算法结论可参考 |
 | `legacy_viz/` | 旧 `viz/` 可视化 launch 与 RViz 配置 | 不在四个正式入口内 |
+| `srm27_navigation_README.md` / `_en.md` | 原 `src/srm27_navigation` 仓库 README | 包目录已拆到 `12/20/30/50/90` 模块，原 README 的目录树和入口路径已过时 |
 
 不要在这里新增“当前架构/操作指南”；这类内容放 `docs/architecture/` 或 `docs/operations/`。
