@@ -35,7 +35,7 @@ from pathlib import Path
 #: 本文件在 <ws>/src/srm27_nav_protocol/test/ 下。
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = PACKAGE_ROOT.parents[1]
-TOOL = WORKSPACE_ROOT / "script" / "test_chassis_speed_feedback.py"
+TOOL = WORKSPACE_ROOT / "scripts" / "test" / "test_chassis_speed_feedback.py"
 
 
 def _assert(condition, message):

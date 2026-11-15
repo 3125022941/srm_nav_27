@@ -16,7 +16,7 @@
 ## architecture
 
 - [启动入口矩阵（唯一入口表）](architecture/launch_matrix.md) —— 四个正式入口、16 个 launch 的 current/compat/deprecated 分类、参数文件分类、fake_vel_transform 当前职责。
-- [ROS 包清点](architecture/package_inventory.md) —— 48 个包的分类、路径与职责。
+- [ROS 包清点](architecture/package_inventory.md) —— 29 个包的分类、路径与职责。
 - [仿真数据流](architecture/仿真数据流%28ai%29.md) —— 仿真链的话题、frame、控制路径（AI 生成，已按 SRM 链更新）。
 - [哨兵导航 TF 与下位机数据接口](architecture/哨兵导航TF与下位机数据接口%28ai%29.md) —— MID-360 安装、传感器分工、上下位机约定。
 - [导航通信协议：下位机接口说明](architecture/导航通信协议-下位机接口说明.md) —— 串口帧格式、速度反馈、状态包。

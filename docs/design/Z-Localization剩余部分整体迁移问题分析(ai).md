@@ -85,15 +85,15 @@ PathJoinSubstitution([FindPackageShare('livox_ros_driver2'), 'launch_ROS2', 'msg
 `config/`、`LICENSE` 拷进包内）。**这是可控的**，但它是"抄过来直接编"一定会撞的第一堵墙，
 而且失败点在 configure/install 而不是编译，容易被误判成环境问题。
 
-### A4 包名过于通用，且 `bringup` 与现有 `srm27_bringup` 语义重叠
+### A4 包名过于通用（旧 `srm27_bringup` 已删除）
 
-`backend` 和 `bringup` 都是没有前缀的通用名。虽然与 `/opt/ros/humble` 和本工作空间现有 48 个包
-**都不重名**（已核对），但：
+`backend` 和 `bringup` 都是没有前缀的通用名。按当时清点，它们与 `/opt/ros/humble` 和本工作空间
+现有包都不重名，但：
 
-- 本仓库既有 `srm27_bringup/launch/bringup.launch.py`，再加一个 `bringup/launch/bringup.launch.py`，
-  `ros2 launch bringup bringup.launch.py` 与 `ros2 launch srm27_bringup bringup.launch.py`
-  只差一个前缀，是典型的现场踩坑点（现场改命令行时少打一个前缀就起了另一条链）。
-- `backend` 这种名字在长期演进里几乎必然与将来的包重名。本仓库其余 48 个包要么带
+- 本仓库当时的旧总入口是 `srm27_bringup/launch/bringup.launch.py`（该包已于 2026-11-14 删除），
+  再加一个 `bringup/launch/bringup.launch.py`，两条命令只差一个前缀，是典型的现场踩坑点。
+  该冲突现在随旧包删除而消失，但无前缀包名仍不建议引入。
+- `backend` 这种名字在长期演进里几乎必然与将来的包重名。本仓库其余 29 个包要么带
   `srm27_` 前缀，要么来自 `dependencies.repos` 里固定的上游仓库，只有这次的
   `backend`/`bringup` 两个名字是无前缀的裸词。
 

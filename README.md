@@ -48,7 +48,7 @@ srm_cmd_mux ◄── rotation_cmd（决策层底盘自转，只取 angular.z）
 | 模型 | `src/srm27_robot_description` | URDF/xacro、雷达/云台外参（实车与仿真共用一份模型） |
 | 仿真 | `src/srm27_gazebo_simulator` | Gazebo 世界、SRM 模型、传感器桥、速度适配 |
 | 接口 | `src/interfaces` | 决策/自定义消息接口 |
-| 工具/依赖 | `src/tools`、`src/dependencies` | 第三方包与工具；`dependencies.repos` 记录来源 |
+| 依赖 | `src/dependencies` | BehaviorTree.ROS2 等第三方；`dependencies.repos` 记录来源 |
 
 > 本轮**没有**物理拆分 `src/srm27_navigation` 的 ROS 包；包路径与构建缓存保持原样。
 > 目录边界与后续拆分建议见入口表和工作区清理记录。

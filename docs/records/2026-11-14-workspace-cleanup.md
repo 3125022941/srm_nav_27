@@ -170,3 +170,24 @@ colcon test --packages-select srm27_nav_bringup
 - 诊断探针：已删除，无法从工作区恢复；需要时从用户清理提交 `6bfc3a5` 之前的 Git 历史取；
 - launch：根目录 canonical 不动；删除 `common|real|simulation|compat` 前缀别名不影响旧命令。
 - config：删除根目录兼容链接前，canonical 文件仍在 `current|legacy` 分组目录。
+
+## 11. 旧包清理（2026-11-14 追加）
+
+按用户确认，删除 19 个不在当前正式链路依赖闭包内的旧包：
+
+- 旧 RoboMaster 框架：`rmoss_base`、`rmoss_cam`、`rmoss_core`、`rmoss_gz_base`、
+  `rmoss_gz_bridge`、`rmoss_gz_cam`、`rmoss_gz_plugins`、`rmoss_gz_resources`、
+  `rmoss_interfaces`、`rmoss_projectile_motion`、`rmoss_util`；
+- 旧工具/示例：`joint_state_publisher`、`joint_state_publisher_gui`、`sdformat_tools`、
+  `pcd2pgm`、`teleop_gimbal_keyboard`、`btcpp_ros2_samples`；
+- 旧总入口：`srm27_bringup`、`rosbag2_composable_recorder`。
+
+同步处理：
+
+- 从 `dependencies.repos` 删除 9 个对应仓库条目；
+- 删除 `src/tools/`（三个包全部移除后为空）；
+- 删除上述包的 `build/`、`install/` 产物；
+- 更新 `docs/architecture/package_inventory.md`：包总数 48 → 29；
+- 更新 `README.md` 的包分层表和 `docs/operations/导航速度调试指南.md` 的旧入口说明。
+
+剩余 29 个包：17 个项目自有、10 个集成/改造导航包、2 个 BehaviorTree 依赖。

@@ -1,20 +1,23 @@
 # ROS 包清点（2026-11-14）
 
-统计口径：`src/**/package.xml`，共 **48** 个 ROS 包。
+统计口径：`src/**/package.xml`，共 **29** 个 ROS 包。
 
 | 分类 | 数量 | 说明 |
 |---|---:|---|
-| 项目自有/维护 | 18 | `srm27_*`、`frontend`、`localization_interfaces`、`rm_decision_interfaces` |
+| 项目自有/维护 | 17 | `srm27_*`、`frontend`、`localization_interfaces`、`rm_decision_interfaces` |
 | 集成/改造的第三方导航包 | 10 | Point-LIO、ZLIO 周边、fake_vel_transform、terrain_analysis 等 |
-| 外部依赖 | 17 | `src/dependencies/` 下的 BehaviorTree.ROS2、rmoss、joint_state_publisher 等 |
-| 工具包 | 3 | `pcd2pgm`、`rosbag2_composable_recorder`、`teleop_gimbal_keyboard` |
+| 外部依赖 | 2 | `src/dependencies/BehaviorTree.ROS2` 下的 BT 运行库与接口 |
 
-## 项目自有/维护（18）
+> 2026-11-14 已删除 19 个旧包：11 个 `rmoss_*`、`joint_state_publisher`、
+> `joint_state_publisher_gui`、`sdformat_tools`、`pcd2pgm`、`teleop_gimbal_keyboard`、
+> `btcpp_ros2_samples`、旧总入口 `srm27_bringup`、`rosbag2_composable_recorder`。
+> `src/tools/` 已随工具包一起删除；`src/dependencies/` 现在只保留 BehaviorTree.ROS2。
+
+## 项目自有/维护（17）
 
 | 包 | 路径 | 角色 |
 |---|---|---|
 | `srm27_behavior` | `src/srm27_behavior` | 行为树、BT 插件、决策参数 |
-| `srm27_bringup` | `src/srm27_bringup` | 旧总入口（雷达/RSP/导航/手柄组合），当前正式入口在 `srm27_nav_bringup` |
 | `srm27_chassis_control` | `src/srm27_chassis_control` | `srm_cmd_mux`：速度合成、限幅、看门狗 |
 | `srm27_nav_protocol` | `src/srm27_nav_protocol` | 下位机串口协议、速度反馈 |
 | `srm27_robot_description` | `src/srm27_robot_description` | 实车/仿真共用 URDF/xacro、雷达/云台外参 |
@@ -47,23 +50,14 @@
 | `ign_sim_pointcloud_tool` | `src/srm27_navigation/ign_sim_pointcloud_tool` | Gazebo 点云转 velodyne 格式 |
 | `livox_ros_driver2` | `src/srm27_navigation/livox_ros_driver2` | MID-360 驱动 |
 
-## 外部依赖（17）
+## 外部依赖（2）
 
-`src/dependencies/`：
+`src/dependencies/BehaviorTree.ROS2/`：
 
-- BehaviorTree.ROS2：`behaviortree_ros2`、`btcpp_ros2_interfaces`、`btcpp_ros2_samples`
-- joint_state_publisher：`joint_state_publisher`、`joint_state_publisher_gui`
-- rmoss_core：`rmoss_base`、`rmoss_cam`、`rmoss_core`、`rmoss_projectile_motion`、`rmoss_util`
-- rmoss_gazebo：`rmoss_gz_base`、`rmoss_gz_bridge`、`rmoss_gz_cam`、`rmoss_gz_plugins`、`rmoss_gz_resources`
-- `rmoss_interfaces`、`sdformat_tools`
-
-## 工具包（3）
-
-| 包 | 路径 | 说明 |
-|---|---|---|
-| `pcd2pgm` | `src/tools/pcd2pgm` | PCD 转 2D 栅格图 |
-| `rosbag2_composable_recorder` | `src/tools/rosbag2_composable_recorder` | 可组合录包 |
-| `teleop_gimbal_keyboard` | `src/tools/teleop_gimbal_keyboard` | 键盘→JointState 云台遥控 |
+| 包 | 说明 |
+|---|---|
+| `behaviortree_ros2` | BehaviorTree.CPP 的 ROS 2 封装，`srm27_behavior` 使用 |
+| `btcpp_ros2_interfaces` | BT 的 ROS 2 动作/服务接口 |
 
 ## 入口与包的对应
 
