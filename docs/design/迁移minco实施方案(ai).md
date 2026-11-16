@@ -388,7 +388,7 @@ flowchart TD
 ### 4.2 建议新增目录
 
 > 2026-11-15 目录已按模块重组；下面保留为当时的方案结构，实际 vendor 在
-> `src/trajectory_planning/backend/`。
+> `src/planner/backend/`。
 
 ```text
 src/srm27_navigation/
@@ -1246,12 +1246,12 @@ ros2 service call /red_standard_robot1/srm_cmd_mux/stop_all std_srvs/srv/Trigger
 - [SRM 实车参数](../../src/bringup/srm27_nav_bringup/config/real/nav2_params_srm.yaml)
 - [导航节点与速度 remap](../../src/bringup/srm27_nav_bringup/launch/navigation_launch.py)
 - [原 Omni 插件接口](../../src/controller/srm27_omni_pid_controller/include/srm27_omni_pid_controller/omni_pid_pursuit_controller.hpp)
-- [里程计差分与 TF 处理](../../src/perception_localization/backend/sensor_scan_generation/src/sensor_scan_generation.cpp)
+- [里程计差分与 TF 处理](../../src/localization/backend/sensor_scan_generation/src/sensor_scan_generation.cpp)
 - [mux 与停止服务](../../src/controller/srm27_chassis_control/src/cmd_mux_node.cpp)
 - [速度合成函数](../../src/controller/srm27_chassis_control/src/velocity_mix.cpp)
 - [底盘限速与超时](../../src/controller/srm27_chassis_control/config/srm_chassis_control.yaml)
 - [串口速度接口](../../src/controller/srm27_nav_protocol/src/srm27_nav_protocol.cpp)
-- [导航行为树](../../src/bringup/srm27_nav_bringup/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml)
+- [导航行为树](../../src/bringup/srm27_nav_bringup/nav2_bt/navigate_to_pose_w_replanning_and_recovery.xml)
 - [仿真启动脚本](../../scripts/bringup/start_sim_nav.sh)
 
 文档文件：`docs/迁移minco实施方案(ai).md`；核查于本机本地日期 2026-10-06。除新方案与索引外，本次未修改导航实现、运行配置或底盘协议。

@@ -75,7 +75,7 @@ from nav2_common.launch import RewrittenYaml
 # 速度限幅的合并模块装在 lib/<包名> 下（scripts/srm_speed_limits.py），
 # 预检脚本与本 launch 共用同一份实现。
 _SCRIPTS_DIR = os.path.join(
-    get_package_prefix("srm27_nav_bringup"), "lib", "srm27_nav_bringup"
+    get_package_prefix("srm27_nav_tools"), "lib", "srm27_nav_tools"
 )
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
@@ -352,7 +352,7 @@ def generate_launch_description():
     # 3) 仿真真值里程计（空场与静态地图模式使用）
     start_simulation_odometry = Node(
         condition=IfCondition(use_ground_truth_odometry),
-        package="srm27_nav_bringup",
+        package="srm27_nav_tools",
         executable="simulation_ground_truth_odometry.py",
         name="simulation_ground_truth_odometry",
         output="screen",
@@ -373,7 +373,7 @@ def generate_launch_description():
     start_gimbal_spin_gate = Node(
         # IfCondition 接受 'True'/'true'/'1'，与脚本传入的写法兼容。
         condition=IfCondition(use_lio_odometry),
-        package="srm27_nav_bringup",
+        package="srm27_nav_tools",
         executable="gimbal_spin_gate.py",
         name="gimbal_spin_gate",
         output="screen",

@@ -52,7 +52,7 @@
 #     算的), 所以途径点不会停车, 到终点才停。终点精度与逐点模式相同(都用
 #     general_goal_checker: xy_goal_tolerance 0.4 m)。
 #   - 用的是 bt_navigator 的 default_nav_through_poses_bt_xml:
-#       behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml
+#       nav2_bt/navigate_through_poses_w_replanning_and_recovery.xml
 #     里面 RemovePassedGoals(radius="0.35") 负责"开过哪个途径点就把它从目标列表里删掉",
 #     不删的话 3 Hz 重规划会把路径绕回已开过的点 → 车折返 / "Failed to make progress"。
 #     这个 radius 和 general_goal_checker.xy_goal_tolerance(0.4)、控制器前瞻

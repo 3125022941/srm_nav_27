@@ -103,7 +103,7 @@
 
 - 现状：**系统里没有 qpOASES，也没有 OSQP**（已确认 `/usr/include`、`/opt/ros/humble/include` 均为空）。
 - 选项：
-  1. **vendored qpOASES**（推荐）：报告的选择，30 变量级稠密 QP 亚毫秒级；源码 3000 行、CMake 直接编，无 ROS 依赖。加进 `dependencies.repos` 或 `src/trajectory_planning/backend/`。
+  1. **vendored qpOASES**（推荐）：报告的选择，30 变量级稠密 QP 亚毫秒级；源码 3000 行、CMake 直接编，无 ROS 依赖。加进 `dependencies.repos` 或 `src/planner/backend/`。
   2. OSQP（稀疏 ADMM）：更适合大而稀疏的问题，我们 40 步 × 3 控制的规模用不上，还多一个 `osqp_vendor` 依赖。
   3. Eigen + 自己写 active-set：不划算。
 - 结论：**vendor qpOASES**，并写一个 `MpcQpTest` 节点，把 H/约束预构造后的单次求解时间打点出来（目标 TP99 < 2ms）。
@@ -169,7 +169,7 @@ x 与 y 关系：一次轨迹取 `yaw = atan2(vy, vx)`（报告 §5.5.5.4.2）�
 **目标**：用 MPC 跟踪 Nav2 现有的全局路径，替换 Omni PID 控制器，其余全部不动。
 
 - 工作项：
-  1. vendor qpOASES 进 `src/trajectory_planning/backend/`（或 `dependencies.repos`）。
+  1. vendor qpOASES 进 `src/planner/backend/`（或 `dependencies.repos`）。
   2. 建 `srm27_mpc_controller` 包：`qp_solver` + `mpc_core`（H/约束预构造、`f` 每周期重算）+ `nav2_core::Controller` 插件壳。
   3. 一次性轨迹化：把 `nav_msgs/Path` 转成等时间间隔 `Trajectory`（速度用后续 `velocity_smoother` 的限幅值或分段常速假设）；`yaw` 取路径切向。
   4. 状态同步：控制器内用 IMU/轮速做局部积分，把里程计位姿外推到"当前"。**注意本项目 LIO 是 `camera_init→body`，经 `loam_interface` 转 `odom`；务必确认用的是哪条 odom 以及时间戳基准。**

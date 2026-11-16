@@ -60,7 +60,7 @@
 # 改档位的步骤
 # ------------
 #   1) 只改本文件里的数字；
-#   2) 跑 `python3 src/bringup/srm27_nav_bringup/scripts/srm_speed_limits_check.py`
+#   2) 跑 `python3 src/bringup/srm27_nav_tools/scripts/srm_speed_limits_check.py`
 #      —— 打印各层实际生效值、指出卡住速度的层，并校验 "控制器 ≤ 平滑器 ≤ 串口"；
 #   3) 上电前再跑实车预检：`ros2 run srm27_nav_bringup srm_minco_real_preflight --params <参数文件>`
 #      （它会自动把本文件合并进去，检查制动走廊、分层一致性等）；

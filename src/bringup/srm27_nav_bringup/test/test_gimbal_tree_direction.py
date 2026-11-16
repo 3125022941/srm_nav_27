@@ -39,7 +39,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 # <ws>/src/bringup/srm27_nav_bringup -> parents[2] = <ws>
 WORKSPACE_ROOT = PACKAGE_ROOT.parents[2]
 CONFIG_DIR = PACKAGE_ROOT / "config" / "real"
-SCRIPTS_DIR = PACKAGE_ROOT / "scripts"
+SCRIPTS_DIR = WORKSPACE_ROOT / "src" / "bringup" / "srm27_nav_tools" / "scripts"
 REAL_PARAMS = CONFIG_DIR / "nav2_params_srm_minco_fakeyaw.yaml"
 PROTOCOL_CONFIG = (
     WORKSPACE_ROOT / "src" / "controller" / "srm27_nav_protocol" / "config" / "srm27_nav_protocol.yaml"

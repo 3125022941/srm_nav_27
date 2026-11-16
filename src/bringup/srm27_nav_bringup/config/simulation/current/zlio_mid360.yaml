@@ -5,7 +5,7 @@
 #
 # ★ 硬性约束：z-loc 的 loadConfig() 对未知键直接抛异常（启动即失败），
 #   所以本文件不得新增任何 z-loc 不认识的键；改动只能改值。
-#   新增/调整前先对照 src/perception_localization/frontend/frontend/docs/parameters.md 与 src/perception_localization/frontend/frontend/src/config.cpp。
+#   新增/调整前先对照 src/localization/frontend/frontend/docs/parameters.md 与 src/localization/frontend/frontend/src/config.cpp。
 #
 # 与上游默认值的三处差异
 # ======================

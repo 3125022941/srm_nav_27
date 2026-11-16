@@ -56,7 +56,7 @@
 #   串口限幅仍在 srm27_nav_protocol 自己的 config 里 (而且限幅作用在 linear_velocity_scale
 #   缩放**之后**)。
 #   改档位只改那一份; 改完先跑自检看"卡住速度的是哪一层", 再按下面的预检清单复核:
-#     python3 src/bringup/srm27_nav_bringup/scripts/srm_speed_limits_check.py
+#     ros2 run srm27_nav_tools srm_speed_limits_check.py
 # 详见 docs/导航速度调试指南.md §1/§2。
 #
 # ⚠ 安全须知 (务必先读):
@@ -1253,8 +1253,8 @@ fi
 # 到实车就周期性失效"。预检脚本把这些只能靠读配置发现的问题集中起来, 只读、不需要 ROS,
 # 因此放在上电之前跑。致命项直接拒绝启动; 待辨识项只告警。
 if [ "$CONTROLLER" = "minco" ]; then
-  PREFLIGHT_PY="$PKG_SRC/scripts/srm_minco_real_preflight.py"
-  [ -f "$PREFLIGHT_PY" ] || PREFLIGHT_PY="$PKG_DIR/scripts/srm_minco_real_preflight.py"
+  PREFLIGHT_PY="$WS_DIR/src/bringup/srm27_nav_tools/scripts/srm_minco_real_preflight.py"
+  [ -f "$PREFLIGHT_PY" ] || PREFLIGHT_PY="$WS_DIR/install/srm27_nav_tools/lib/srm27_nav_tools/srm_minco_real_preflight.py"
   if [ -f "$PREFLIGHT_PY" ] && command -v python3 >/dev/null 2>&1; then
     PROTOCOL_CFG_FOR_PREFLIGHT="$WS_DIR/src/controller/srm27_nav_protocol/config/srm27_nav_protocol.yaml"
     PREFLIGHT_ARGS=(--params "$PARAMS_FILE" --expect-minco)
@@ -1287,7 +1287,7 @@ if [ "$CONTROLLER" = "minco" ]; then
 fi
 
 # ---------- 多目标航点(途径点)行为树的部署检查 ----------
-# 本仓库的 params 里 default_nav_through_poses_bt_xml 指向 behavior_trees/
+# 本仓库的 params 里 default_nav_through_poses_bt_xml 指向 nav2_bt/
 # navigate_through_poses_route_aware.xml, 它用自研 BT 节点 RemovePassedGoalsByRoute
 # 代替 nav2 的 RemovePassedGoals(nav2 那个在这套部署上实测不删已过的途径点)。
 # 树由 srm27_nav_bringup 提供、节点由 srm27_nav_plugins 的 .so 提供, 两者都是 **启动时**
@@ -1295,16 +1295,16 @@ fi
 # 这两个包时, 报错要到 bt_navigator 启动时才出现(现场表现: 多目标导航直接不可用/加载报错)。
 # 所以这里提前拦住, 并写清楚要重编哪两个包。
 if [ "$DRY_RUN" != "1" ]; then
-  BT_REL="$(sed -n 's|.*default_nav_through_poses_bt_xml:.*behavior_trees/\([^ ]*\).*|\1|p' \
+  BT_REL="$(sed -n 's|.*default_nav_through_poses_bt_xml:.*nav2_bt/\([^ ]*\).*|\1|p' \
     "$PARAMS_FILE" | head -1)"
   if [ -n "$BT_REL" ]; then
     BT_PATH=""
-    for _cand in "$PKG_DIR/share/srm27_nav_bringup/behavior_trees/$BT_REL" \
-                 "$PKG_SRC/behavior_trees/$BT_REL"; do
+    for _cand in "$PKG_DIR/share/srm27_nav_bringup/nav2_bt/$BT_REL" \
+                 "$PKG_SRC/nav2_bt/$BT_REL"; do
       if [ -f "$_cand" ]; then BT_PATH="$_cand"; break; fi
     done
     if [ -z "$BT_PATH" ]; then
-      echo "[错误] 参数指向的行为树不存在: behavior_trees/$BT_REL" >&2
+      echo "[错误] 参数指向的行为树不存在: nav2_bt/$BT_REL" >&2
       echo "       参数文件: $PARAMS_FILE" >&2
       echo "       先重新编译部署: colcon build --packages-select srm27_nav_bringup" >&2
       exit 1
@@ -1962,7 +1962,7 @@ cat <<'EOF'
   6) 速度没有被任何一层静默钳住: /cmd_vel_chassis 的合速度能达到
      min(controllers limits, velocity_smoother, mux v_max, 串口 max_vx) 的 90% 以上。
      想知道"是哪一层卡住"，跑:
-       python3 src/bringup/srm27_nav_bringup/scripts/srm_speed_limits_check.py
+       ros2 run srm27_nav_tools srm_speed_limits_check.py
 EOF
 else
 cat <<'EOF'

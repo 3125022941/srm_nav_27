@@ -41,7 +41,7 @@ from launch_ros.descriptions import ParameterValue
 
 # 描述构建模块与预检脚本装在同一个目录（见 CMakeLists 的 install(FILES ...)）。
 sys.path.insert(
-    0, str(Path(get_package_prefix("srm27_nav_bringup")) / "lib" / "srm27_nav_bringup")
+    0, str(Path(get_package_prefix("srm27_nav_tools")) / "lib" / "srm27_nav_tools")
 )
 
 from srm_robot_description import build_description  # noqa: E402

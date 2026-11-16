@@ -86,7 +86,7 @@ from nav2_common.launch import RewrittenYaml
 # 速度限幅的合并模块装在 lib/<包名> 下（scripts/srm_speed_limits.py），
 # 预检脚本与本 launch 共用同一份实现。
 _SCRIPTS_DIR = os.path.join(
-    get_package_prefix("srm27_nav_bringup"), "lib", "srm27_nav_bringup"
+    get_package_prefix("srm27_nav_tools"), "lib", "srm27_nav_tools"
 )
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
@@ -412,7 +412,7 @@ def generate_launch_description():
     #      · 没给 -> constant 模式，暂位 0 度：TF 与 fixed 完全等价，但结构已就绪，
     #        以后只传 gimbal_joint_topic 即可，不用再动模型/launch。
     gimbal_relay_cmd = Node(
-        package="srm27_nav_bringup",
+        package="srm27_nav_tools",
         executable="gimbal_joint_state_relay.py",
         name="gimbal_joint_state_relay",
         output="screen",

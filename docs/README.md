@@ -39,6 +39,7 @@
 - [导航改云台系与决策层小陀螺实施方案](design/导航改云台系与决策层小陀螺实施方案.md) —— 云台系导航与 `rotation_cmd` 的职责边界。
 - [GICP 初始重定位仿真验证方案](design/GICP初始重定位仿真验证方案.md) —— 地图对齐、误差矩阵、验收指标。
 - [仿真 LIO 前端替换 Z-LIO 实施方案](design/仿真LIO前端替换Z-LIO实施方案%28ai%29.md) —— ZLIO 接入与三级回退。
+- [Z-Localization 算法原理与迁移学习指南](design/Z-Localization算法原理与迁移学习指南.md) —— 前端 LIO、后端因子图、全局观测与迁移时的数据语义。
 - [Z-Localization 剩余部分整体迁移问题分析](design/Z-Localization剩余部分整体迁移问题分析%28ai%29.md) —— 迁移风险与三档路线。
 
 ## records

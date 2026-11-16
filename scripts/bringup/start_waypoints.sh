@@ -39,7 +39,7 @@
 #     本脚本只下发导航目标, 不直接发速度: 速度仍走 Nav2 控制器 → velocity_smoother
 #     → fake_vel_transform → /cmd_vel_chassis 这条链路, 底盘限幅/看门狗照旧生效。
 #   - --pass-through 用的是 bt_navigator 的 navigate_through_poses 与
-#     behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml, 默认导航栈
+#     nav2_bt/navigate_through_poses_w_replanning_and_recovery.xml, 默认导航栈
 #     就带; 它只在最后一个点(终点)停车, 途径点不停车。失败时按 --retry 重发还没开过的
 #     剩余点, 再用完则按 --on-failure abort/skip。细节见 waypoint_mission.py 头部注释。
 #   - RViz 点选请用工具栏的 "2D Goal Pose" (发 /goal_pose) 或 "Publish Point"

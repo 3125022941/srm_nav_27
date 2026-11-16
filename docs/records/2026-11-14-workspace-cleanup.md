@@ -11,7 +11,7 @@
 清理前，功能代码、兼容链路、一次性脚本、实验数据、历史文档混在同一层：
 
 - `log_diag/` 约 23 GB，全部是建图录包和建图日志；
-- `src/perception_localization/frontend/point_lio/PCD/` 约 890 MB 运行生成点云；
+- `src/localization/frontend/point_lio/PCD/` 约 890 MB 运行生成点云；
 - `user_test_log/` 约 99 MB 实验 CSV/PNG；
 - `.mapcheck/`、`.tmp_diag/`、`.tmp_roslog/` 中有已提交的临时脚本和结果；
 - `scripts/` 28 个脚本平铺；`docs/` 31 篇文档没有状态区分；

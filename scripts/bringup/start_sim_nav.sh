@@ -24,7 +24,7 @@
 #   launch 启动时把它合并进 nav2_params_srm*.yaml 与 srm_chassis_control.yaml,
 #   参数文件里不再写这些键 (两处都写且值不同 -> 启动直接报错)。
 #   改档位只改那一份; 改完用下面的自检看"卡住速度的是哪一层":
-#     python3 src/bringup/srm27_nav_bringup/scripts/srm_speed_limits_check.py
+#     ros2 run srm27_nav_tools srm_speed_limits_check.py
 # 详见 docs/导航速度调试指南.md §1/§2。
 #
 # 模式说明 (本脚本只做导航):

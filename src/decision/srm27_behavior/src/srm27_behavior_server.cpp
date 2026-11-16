@@ -104,6 +104,8 @@ int main(int argc, char * argv[])
   rclcpp::NodeOptions options;
   auto action_server = std::make_shared<srm27_behavior::SentryBehaviorServer>(options);
 
+  action_server->node()->declare_parameter<std::string>("models_output_path", "");
+
   RCLCPP_INFO(action_server->node()->get_logger(), "Starting SentryBehaviorServer");
 
   rclcpp::executors::MultiThreadedExecutor exec(
@@ -117,9 +119,28 @@ int main(int argc, char * argv[])
   // generated using the following command.
   std::string xml_models = BT::writeTreeNodesModelXML(action_server->factory());
 
-  // Save the XML models to a file
-  std::ofstream file(std::filesystem::path(ROOT_DIR) / "behavior_trees" / "models.xml");
-  file << xml_models;
+  // Model generation is a developer tool. Only write when an explicit output path is supplied;
+  // installed robot deployments must never modify the source or install tree.
+  const auto models_output = action_server->node()->get_parameter("models_output_path").as_string();
+  if (!models_output.empty()) {
+    const std::filesystem::path output_path(models_output);
+    std::error_code error;
+    std::filesystem::create_directories(output_path.parent_path(), error);
+    if (error) {
+      RCLCPP_ERROR(
+        action_server->node()->get_logger(), "Cannot create behavior model directory '%s': %s",
+        output_path.parent_path().c_str(), error.message().c_str());
+    } else {
+      std::ofstream file(output_path);
+      if (!file) {
+        RCLCPP_ERROR(
+          action_server->node()->get_logger(), "Cannot write behavior tree models to '%s'",
+          output_path.c_str());
+      } else {
+        file << xml_models;
+      }
+    }
+  }
 
   rclcpp::shutdown();
 }

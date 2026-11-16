@@ -20,7 +20,7 @@ src/
 ├── interfaces/
 │   ├── localization_interfaces
 │   └── rm_decision_interfaces
-├── perception_localization/
+├── localization/
 │   ├── frontend/
 │   │   ├── frontend                 # ZLIO
 │   │   ├── point_lio
@@ -30,7 +30,7 @@ src/
 │   └── backend/
 │       ├── small_gicp_relocalization
 │       └── sensor_scan_generation
-├── trajectory_planning/
+├── planner/
 │   ├── frontend/
 │   │   ├── terrain_analysis
 │   │   ├── terrain_analysis_ext
@@ -59,7 +59,7 @@ src/
     └── BehaviorTree.ROS2
 ```
 
-`src/perception_localization/frontend/frontend` 是“感知定位前端”分组下的
+`src/localization/frontend/frontend` 是“感知定位前端”分组下的
 ZLIO 包 `frontend`；目录层级看起来重复，但包名仍是 `frontend`。
 
 ## 3. 包归属

@@ -54,7 +54,7 @@
 # 改档位的步骤
 # ------------
 #   1) 只改本文件里的数字（别去改参数文件，那里已经没有这些键了）；
-#   2) 跑 `python3 src/bringup/srm27_nav_bringup/scripts/srm_speed_limits_check.py`
+#   2) 跑 `python3 src/bringup/srm27_nav_tools/scripts/srm_speed_limits_check.py`
 #      —— 它打印各层实际生效值、指出**卡住速度的是哪一层**，并校验
 #      "控制器 ≤ 平滑器 ≤ mux" 的单调关系；
 #   3) 提速还要一起看：planning_horizon / max_linear_accel（制动距离）、

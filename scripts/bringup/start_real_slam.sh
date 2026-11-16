@@ -314,7 +314,7 @@ from pathlib import Path
 from ament_index_python.packages import get_package_prefix
 
 sys.path.insert(
-    0, str(Path(get_package_prefix("srm27_nav_bringup")) / "lib" / "srm27_nav_bringup")
+    0, str(Path(get_package_prefix("srm27_nav_tools")) / "lib" / "srm27_nav_tools")
 )
 from srm_robot_description import build_description, gravity_from_mounting
 

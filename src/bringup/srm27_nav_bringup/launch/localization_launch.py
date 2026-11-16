@@ -274,7 +274,7 @@ def generate_launch_description():
         condition=IfCondition(
             PythonExpression([use_lio_odometry, " and (", use_zlio_frontend, ")"])
         ),
-        package="srm27_nav_bringup",
+        package="srm27_localization_adapter",
         executable="imu_saturation_guard.py",
         name="imu_saturation_guard",
         output="screen",
@@ -330,7 +330,7 @@ def generate_launch_description():
         condition=IfCondition(
             PythonExpression([use_lio_odometry, " and (", use_zlio_frontend, ")"])
         ),
-        package="srm27_nav_bringup",
+        package="srm27_localization_adapter",
         executable="zlio_bridge.py",
         name="zlio_bridge",
         output="screen",

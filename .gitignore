@@ -35,7 +35,7 @@ tmp/
 
 # Generated map and visualization artifacts
 /*.pcd
-/src/perception_localization/frontend/point_lio/PCD/*.pcd
+/src/localization/frontend/point_lio/PCD/*.pcd
 /*.pgm
 /*.gv
 /*.pdf
@@ -88,5 +88,5 @@ maps/pcd/*.pcd
 /**/.pytest_cache/
 
 # Point-LIO 生成点云：源码包只保留说明文件
-/src/perception_localization/frontend/point_lio/PCD/*
-!/src/perception_localization/frontend/point_lio/PCD/readme.md
+/src/localization/frontend/point_lio/PCD/*
+!/src/localization/frontend/point_lio/PCD/readme.md

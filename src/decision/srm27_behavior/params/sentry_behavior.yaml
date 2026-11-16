@@ -6,12 +6,14 @@ srm27_behavior_server:
     groot2_port: 1667                           # Optional (defaults to 1667)
     ros_plugins_timeout: 1000                   # Optional (defaults 1000 ms)
     use_cout_logger: false                      # Optional (defaults to false)
+    # Empty in deployed runs. Set explicitly in a developer session to export Groot2 models.
+    models_output_path: ""
 
     plugins:
       - srm27_behavior/bt_plugins
 
     behavior_trees:
-      - srm27_behavior/behavior_trees
+      - srm27_behavior/decision_trees
 
 srm27_behavior_client:
   ros__parameters:

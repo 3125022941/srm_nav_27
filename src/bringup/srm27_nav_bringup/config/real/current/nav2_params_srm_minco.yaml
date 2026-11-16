@@ -21,7 +21,7 @@
 #     逐项状态见 docs/minco实车迁移实施记录(ai).md 的“待辨识清单”。
 #   * 阶段一 yaw_policy.mode = xy_only：MPC 只控平移，自转仍由独立自转链路负责。
 #   * 【2026-10-09 从仿真链迁移】多目标航点(BT)与代价地图外形:
-#       - default_nav_through_poses_bt_xml 换成 behavior_trees/navigate_through_poses_route_aware.xml,
+#       - default_nav_through_poses_bt_xml 换成 nav2_bt/navigate_through_poses_route_aware.xml,
 #         plugin_lib_names 里加 srm27_remove_passed_goals_bt_node(自研 RemovePassedGoalsByRoute)。
 #         原因: nav2 原版 RemovePassedGoals 在本仓库这套部署上实测**不生效**(车贴着途径点
 #         0.05~0.34 m 开过去点照样留着) → 3 Hz 重规划一直生成"回头去它"的腿 → 车在途径点之间
@@ -38,7 +38,7 @@
 #     bt_navigator 启动时会按 plugin_lib_names 里的库名 dlopen 这个 .so, 缺了会直接报找不到节点。
 
 #   * 上电前先跑预检（只读、不需要 ROS）：
-#         python3 src/bringup/srm27_nav_bringup/scripts/srm_minco_real_preflight.py \
+#         python3 src/bringup/srm27_nav_tools/scripts/srm_minco_real_preflight.py \
 #             --params src/bringup/srm27_nav_bringup/config/real/nav2_params_srm_minco.yaml \
 #             --expect-minco
 
@@ -450,8 +450,8 @@ bt_navigator:
     bt_loop_duration: 10
     default_server_timeout: 100
     wait_for_service_timeout: 1000
-    default_nav_to_pose_bt_xml: $(find-pkg-share srm27_nav_bringup)/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml
-    default_nav_through_poses_bt_xml: $(find-pkg-share srm27_nav_bringup)/behavior_trees/navigate_through_poses_route_aware.xml                # 用自研 RemovePassedGoalsByRoute 代替 nav2 的 RemovePassedGoals
+    default_nav_to_pose_bt_xml: $(find-pkg-share srm27_nav_bringup)/nav2_bt/navigate_to_pose_w_replanning_and_recovery.xml
+    default_nav_through_poses_bt_xml: $(find-pkg-share srm27_nav_bringup)/nav2_bt/navigate_through_poses_route_aware.xml                # 用自研 RemovePassedGoalsByRoute 代替 nav2 的 RemovePassedGoals
     plugin_lib_names:
       - nav2_compute_path_to_pose_action_bt_node
       - nav2_compute_path_through_poses_action_bt_node
@@ -538,13 +538,13 @@ controller_server:
       # 参数文件里若残留它，它不会被声明也不会被读取 ——
       # scripts/srm_minco_real_preflight.py 会在文本层拦下这种残留。
       # 与实车 Omni 配置保持一致（main 已由 0.15 放宽到 0.4）：航点跳过半径 0.35 必须小于
-      # 本容差，否则最后一个航点会在判定到达前被删掉、车掉头往回走（见 behavior_trees/
+      # 本容差，否则最后一个航点会在判定到达前被删掉、车掉头往回走（见 nav2_bt/
       # navigate_through_poses_w_replanning_and_recovery.xml 的约束说明）。
       # 平面位置容差（米）。它同时是**终点急停的进入半径**（terminal.tolerance = 0 会跟随它），
       # 所以这一个数同时决定"在哪开始急刹"和"多近算到点"。
       # 0.50 的含义：车距末点 0.50 m 时立刻给零速，滑行 v²/(2·a_chassis) 后停下；
       # 只要底盘减速能力 >= v_entry²/(4·tol)（见 terminal 段注释）停车点就仍在末点 ±0.5 m 内。
-      # 约束：必须大于行为树的航点跳过半径 0.35（见 behavior_trees/
+      # 约束：必须大于行为树的航点跳过半径 0.35（见 nav2_bt/
       # navigate_through_poses_w_replanning_and_recovery.xml 的说明），且不小于
       # terminal_reached_radius（0.20）。0.50 > 0.35 与 0.50 > 0.20 都满足。
       xy_goal_tolerance: 0.50                           # 平面位置容差（米）

@@ -2,9 +2,10 @@
 
 这里放**跨包、可重复执行**的冒烟测试；ROS 包内的单元/回归测试仍在各包 `test/` 下：
 
-- `src/trajectory_planning/backend/srm27_minco_core/test/`
+- `src/planner/backend/srm27_minco_core/test/`
 - `src/controller/srm27_minco_controller/test/`
-- `src/trajectory_planning/frontend/srm27_nav_plugins/test/`
+- `src/planner/frontend/srm27_costmap_plugins/test/`
+- `src/planner/frontend/srm27_nav_behavior_plugins/test/`
 - `src/bringup/srm27_nav_bringup/test/`（launch wiring、参数、TF 契约）
 - `src/controller/fake_vel_transform/test/`
 - `src/controller/srm27_chassis_control/test/`

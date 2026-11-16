@@ -44,7 +44,7 @@ from launch_ros.descriptions import ParameterValue
 
 # 描述构建模块与预检脚本装在同一个目录（见 CMakeLists 的 install(FILES ...)）。
 sys.path.insert(
-    0, str(Path(get_package_prefix("srm27_nav_bringup")) / "lib" / "srm27_nav_bringup")
+    0, str(Path(get_package_prefix("srm27_nav_tools")) / "lib" / "srm27_nav_tools")
 )
 
 from srm_robot_description import (  # noqa: E402
@@ -121,7 +121,7 @@ def launch_setup(context):
             ],
         ),
         Node(
-            package="srm27_nav_bringup",
+            package="srm27_nav_tools",
             executable="gimbal_joint_state_relay.py",
             name="gimbal_joint_state_relay",
             output="screen",
@@ -201,7 +201,7 @@ def launch_setup(context):
             ],
         ),
         Node(
-            package="srm27_nav_bringup",
+            package="srm27_localization_adapter",
             executable="zlio_bridge.py",
             name="zlio_bridge",
             condition=IfCondition(PythonExpression([str(use_zlio)])),

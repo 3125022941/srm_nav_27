@@ -399,7 +399,7 @@ zlio/session
 
 | 路径 | 内容 |
 |---|---|
-| `src/perception_localization/frontend/frontend/` | 从 `/home/srm/z-localization/src/perception_localization/frontend/frontend` 原样拷入 |
+| `src/localization/frontend/frontend/` | 从 `/home/srm/z-localization/src/localization/frontend/frontend` 原样拷入 |
 | `src/interfaces/localization_interfaces/` | 同上，`frontend` 的编译依赖 |
 | `src/bringup/srm27_nav_bringup/scripts/zlio_bridge.py` | §4 的桥接节点 |
 | `src/bringup/srm27_nav_bringup/config/simulation/zlio_mid360.yaml` | §7.1 |
@@ -632,7 +632,7 @@ zlio_bridge:
 
 | 本方案用的 z-loc 能力 | 上游位置 |
 |---|---|
-| ZLIO 前端节点与参数 | `src/perception_localization/frontend/frontend/`（`apps/node.cpp`、`config/lio.yaml`、`docs/parameters.md`） |
+| ZLIO 前端节点与参数 | `src/localization/frontend/frontend/`（`apps/node.cpp`、`config/lio.yaml`、`docs/parameters.md`） |
 | `FrontendFrame` 位姿+点云打包 | `src/interfaces/localization_interfaces/msg/FrontendFrame.msg` |
 | `output_resolution`（输出点云体素，默认 0.10 m） | `apps/node.cpp:105` |
 | 换代/会话通知 | `apps/node.cpp` 的 `publishSession()` / `FrontendSession` |

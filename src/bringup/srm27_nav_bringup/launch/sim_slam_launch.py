@@ -10,9 +10,8 @@
   * ``navigation_launch.py`` 起 loam_interface / sensor_scan_generation
     （在 has_odometry_source 为真时把 publish_tf 置 True，发布 odom -> base_link）。
 
-Point-LIO 退出时把累积点云落盘成 ``PCD/scans.pcd``，路径是编译期常量 ROOT_DIR：
-``~/srm_nav_27_data/generated_pcd/point_lio/scans.pcd``
-（见 point_lio/CMakeLists.txt 的 ``-DROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/"``）。
+Point-LIO 退出时把累积点云落盘为 ``scans.pcd``，默认写入运行数据目录
+``~/srm_nav_27_data/generated_pcd/point_lio``；入口脚本通过运行期 ``SRM27_PCD_DIR`` 指定该目录。
 用 ``./scripts/bringup/start_sim_slam.sh --collect`` 把它收走。
 
 完整链路：

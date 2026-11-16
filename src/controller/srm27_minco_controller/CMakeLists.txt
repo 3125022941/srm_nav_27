@@ -26,8 +26,6 @@ ament_auto_add_library(${PROJECT_NAME} SHARED
 pluginlib_export_plugin_description_file(nav2_core srm27_minco_controller.xml)
 
 if(BUILD_TESTING)
-  set(ament_cmake_clang_format_CONFIG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/.clang-format")
-  set(ament_cmake_clang_tidy_CONFIG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/.clang-tidy")
   find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()
 

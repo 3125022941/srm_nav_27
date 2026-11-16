@@ -38,7 +38,7 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node, PushRosNamespace, SetRemap
 
 sys.path.insert(
-    0, str(Path(get_package_prefix("srm27_nav_bringup")) / "lib" / "srm27_nav_bringup")
+    0, str(Path(get_package_prefix("srm27_nav_tools")) / "lib" / "srm27_nav_tools")
 )
 
 from srm_robot_description import build_description  # noqa: E402

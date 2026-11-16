@@ -41,12 +41,12 @@ srm_cmd_mux ◄── rotation_cmd（决策层底盘自转，只取 angular.z）
 | 模块 | 路径 | 说明 |
 |---|---|---|
 | 接口 | `src/interfaces` | `localization_interfaces`、`rm_decision_interfaces` |
-| 感知定位 | `src/perception_localization` | frontend: `frontend`(ZLIO)、`point_lio`、`livox_ros_driver2`、`loam_interface`、`pointcloud_to_laserscan`；backend: `small_gicp_relocalization`、`sensor_scan_generation` |
-| 轨迹规划 | `src/trajectory_planning` | frontend: `terrain_analysis`、`terrain_analysis_ext`、`srm27_nav_plugins`；backend: `srm27_minco_core`、`srm27_minco_vendor`、`srm27_qpoases_vendor` |
+| 感知定位 | `src/localization` | frontend: `frontend`(ZLIO)、`point_lio`、`livox_ros_driver2`、`loam_interface`、`pointcloud_to_laserscan`；backend: `small_gicp_relocalization`、`sensor_scan_generation`、`srm27_localization_adapter` |
+| 轨迹规划 | `src/planner` | frontend: `terrain_analysis`、`terrain_analysis_ext`、`srm27_costmap_plugins`、`srm27_nav_behavior_plugins`；backend: `srm27_minco_core`、`srm27_minco_vendor`、`srm27_qpoases_vendor` |
 | 控制器 | `src/controller` | `srm27_minco_controller`、`srm27_omni_pid_controller`、`fake_vel_transform`、`srm27_chassis_control`、`srm27_nav_protocol`、`srm27_teleop_twist_joy` |
 | 决策 | `src/decision` | `srm27_behavior` |
 | 仿真 | `src/simulation` | `srm27_gazebo_simulator`、`srm27_robot_description`、`ign_sim_pointcloud_tool` |
-| 装配 | `src/bringup` | `srm27_nav_bringup`、`srm27_navigation` 元包 |
+| 装配 | `src/bringup` | `srm27_nav_bringup`、`srm27_nav_tools`、`srm27_navigation` 元包 |
 | 依赖 | `src/dependencies` | `BehaviorTree.ROS2` |
 
 > 七个业务模块：感知定位前端/后端、轨迹规划前端/后端、控制器、决策、仿真；

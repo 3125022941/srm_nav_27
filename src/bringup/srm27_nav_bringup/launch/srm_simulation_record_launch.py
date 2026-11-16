@@ -90,9 +90,9 @@ def _launch_setup(context):
         output_dir = os.path.join("rosbags", f"srm_regression_{stamp}{suffix}")
 
     metadata_script = os.path.join(
-        get_package_prefix("srm27_nav_bringup"),
+        get_package_prefix("srm27_nav_tools"),
         "lib",
-        "srm27_nav_bringup",
+        "srm27_nav_tools",
         "srm_regression_metadata.py",
     )
 

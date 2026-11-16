@@ -3,31 +3,6 @@ project(srm27_nav_bringup)
 
 find_package(ament_cmake_auto REQUIRED)
 
-install(PROGRAMS
-  scripts/gimbal_spin_gate.py
-  # 实车云台关节角 -> /joint_states 中继（协议补齐回传字段后即可接进 TF）。
-  scripts/gimbal_joint_state_relay.py
-  scripts/simulation_ground_truth_odometry.py
-  scripts/srm_minco_real_preflight.py
-  scripts/srm_regression_metadata.py
-  scripts/srm_speed_limits_check.py
-  scripts/srm_velocity_monitor.py
-  # ZLIO 前端 -> odom 系契约的桥接（loam_interface 的 ZLIO 版本）。
-  scripts/zlio_bridge.py
-  # 给 ZLIO 补上 Point-LIO 早就有的 IMU 加速度饱和检查（satu_acc）。
-  scripts/imu_saturation_guard.py
-  DESTINATION lib/${PROJECT_NAME}
-)
-
-# 纯模块：launch（速度限幅合并）、实车预检与限幅自检脚本都要导入同一个实现，
-# 必须装在脚本同目录（launch 通过 get_package_prefix(...)/lib/<包名> 导入）。
-install(FILES
-  scripts/srm_nav_pose_math.py
-  scripts/srm_robot_description.py
-  scripts/srm_speed_limits.py
-  DESTINATION lib/${PROJECT_NAME}
-)
-
 if(BUILD_TESTING)
   # 只保留本分支（小陀螺 / fakeyaw 链路）自己的回归测试。
   # 其余测试已随 main 的 b2d6fc2 一并删除，因此这里不再跑 ament_lint_auto。
@@ -36,14 +11,14 @@ if(BUILD_TESTING)
   find_program(SRM27_PYTHON3_EXECUTABLE NAMES python3 REQUIRED)
   find_package(ament_cmake_test REQUIRED)
   foreach(test_name test_fakeyaw_launch_wiring test_fakeyaw_real_wiring
-                    test_cli_parity test_lio_frontend_wiring test_zlio_bridge_math
-                    test_speed_limits test_gimbal_tree_direction)
+                    test_cli_parity test_lio_frontend_wiring
+                    test_gimbal_tree_direction test_frame_contract)
     ament_add_test(${test_name}
       GENERATE_RESULT_FOR_RETURN_CODE_ZERO
       COMMAND ${SRM27_PYTHON3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/test/${test_name}.py
       OUTPUT_FILE ${CMAKE_CURRENT_BINARY_DIR}/${test_name}.txt
-      ENV PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/scripts:$ENV{PYTHONPATH}
+      ENV PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/../srm27_nav_tools/scripts:${CMAKE_CURRENT_SOURCE_DIR}/../../localization/backend/srm27_localization_adapter/scripts:$ENV{PYTHONPATH}
     )
   endforeach()
 endif()
@@ -55,6 +30,6 @@ ament_auto_package(
   meshes
   pcd
   config
-  behavior_trees
+  nav2_bt
   rviz
 )

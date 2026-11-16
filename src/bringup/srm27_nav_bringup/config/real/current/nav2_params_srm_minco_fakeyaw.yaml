@@ -51,7 +51,7 @@
 #      云台转（start_real_nav.sh 启动时会提示）。loam_interface/zlio_bridge 的开机快照
 #      现在只含固定外参，但 LIO 初始化本身仍要求静止。
 #   3) 预检（只读、不需要 ROS）：
-#        python3 src/bringup/srm27_nav_bringup/scripts/srm_minco_real_preflight.py \
+#        python3 src/bringup/srm27_nav_tools/scripts/srm_minco_real_preflight.py \
 #            --params src/bringup/srm27_nav_bringup/config/real/nav2_params_srm_minco_fakeyaw.yaml \
 #            --expect-minco
 #
@@ -502,8 +502,8 @@ bt_navigator:
     bt_loop_duration: 10
     default_server_timeout: 100
     wait_for_service_timeout: 1000
-    default_nav_to_pose_bt_xml: $(find-pkg-share srm27_nav_bringup)/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml
-    default_nav_through_poses_bt_xml: $(find-pkg-share srm27_nav_bringup)/behavior_trees/navigate_through_poses_route_aware.xml                # 用自研 RemovePassedGoalsByRoute 代替 nav2 的 RemovePassedGoals
+    default_nav_to_pose_bt_xml: $(find-pkg-share srm27_nav_bringup)/nav2_bt/navigate_to_pose_w_replanning_and_recovery.xml
+    default_nav_through_poses_bt_xml: $(find-pkg-share srm27_nav_bringup)/nav2_bt/navigate_through_poses_route_aware.xml                # 用自研 RemovePassedGoalsByRoute 代替 nav2 的 RemovePassedGoals
     plugin_lib_names:
       - nav2_compute_path_to_pose_action_bt_node
       - nav2_compute_path_through_poses_action_bt_node
@@ -592,13 +592,13 @@ controller_server:
       plugin: "srm27_nav_plugins::OmniStoppedGoalChecker"
       stateful: True
       # 与实车 Omni 配置保持一致（main 已由 0.15 放宽到 0.4）：航点跳过半径 0.35 必须小于
-      # 本容差，否则最后一个航点会在判定到达前被删掉、车掉头往回走（见 behavior_trees/
+      # 本容差，否则最后一个航点会在判定到达前被删掉、车掉头往回走（见 nav2_bt/
       # navigate_through_poses_w_replanning_and_recovery.xml 的约束说明）。
       # 平面位置容差（米）。它同时是**终点急停的进入半径**（terminal.tolerance = 0 会跟随它），
       # 所以这一个数同时决定"在哪开始急刹"和"多近算到点"。
       # 0.50 的含义：车距末点 0.50 m 时立刻给零速，滑行 v²/(2·a_chassis) 后停下；
       # 只要底盘减速能力 >= v_entry²/(4·tol)（见 terminal 段注释）停车点就仍在末点 ±0.5 m 内。
-      # 约束：必须大于行为树的航点跳过半径 0.35（见 behavior_trees/
+      # 约束：必须大于行为树的航点跳过半径 0.35（见 nav2_bt/
       # navigate_through_poses_w_replanning_and_recovery.xml 的说明），且不小于
       # terminal_reached_radius（0.20）。0.50 > 0.35 与 0.50 > 0.20 都满足。
       # ★ 2026-11-14：0.50 → 0.20（0.7 m 窄道测试）。0.50 时车停在离目标 0.47~0.49 m
@@ -973,7 +973,7 @@ controller_server:
         #   (1.0 s) 还没成轨就抛给行为树（清图 + BackUpFreeSpace）。
         #   ⚠ 代价（必须知道）：[0.30, 0.38) 内本地重规划基本必败、链路 A 又不会脱困，
         #     兜底全压在行为树那一路。2026-11-12 起 BT 的 backup_speed 也一并降到 0.2
-        #     （三份 behavior_trees/*.xml，仿真共用），所以这条兜底同样是"慢推"，
+        #     （三份 nav2_bt/*.xml，仿真共用），所以这条兜底同样是"慢推"，
         #     只是每次要 5 s 才走完 1.0 m —— 现场表现为"卡住后要等一会儿才动"。
         #   回退：改回 0.40（>= 0.38，不留死区）。
         stuck_clearance: 0.30
