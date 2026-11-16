@@ -10,7 +10,7 @@
 #   步骤 6: 手柄遥控 (可选, 默认关闭)
 #
 # 定位方式 (四者互斥, 区别只在 map->odom 由谁发布):
-#   --lio     (默认) Point-LIO 只提供里程计, map->odom 用静态 TF —— 实车推荐
+#   --lio     ZLIO / Point-LIO 提供里程计, map->odom 用静态 TF（默认 ZLIO 走此模式）
 #   --reloc   small_gicp 与先验 PCD 做 GICP 配准, 由它发布 map->odom (需要 --prior-pcd)
 #   --slam    slam_toolbox 边跑边建图, 由它发布 map->odom (不需要先验地图)
 #   --static  只加载先验栅格图 + 静态 map->odom, 没有任何里程计来源
@@ -70,7 +70,7 @@
 #   3) 底盘能动之后, 先在 RViz 用很小的目标点试一次, 确认车头方向/正负号都对。
 #
 # 用法:
-#   ./script/start_real_nav.sh                       # 默认 --reloc + MINCO 迁移链, 启动全部
+#   ./script/start_real_nav.sh                       # 默认 ZLIO + 静态 map->odom + MINCO 迁移链
 #   ./script/start_real_nav.sh --tdt-planner          # YAstar + MINCO/MPC
 #   ./script/start_real_nav.sh --controller minco    # MINCO + MPC (默认, fakeyaw 迁移链)
 #   ./script/start_real_nav.sh --chassis-spin 0.3     # 决策层小陀螺：rotation_cmd -> mux -> 底盘
@@ -94,6 +94,7 @@
 #   ── 与 start_sim_nav.sh 同名同义 ─────────────────────────────────────────────
 #   -m, --map <名字|绝对路径>   地图名(在 maps/ 下解析)或 YAML 绝对路径; 缺省自动选择
 #       --prior-pcd <名字|路径> 重定位先验点云, 默认与地图同名
+#       --tdt-planner          全局规划器换成 YAstar（局部仍为 MINCO/MPC）
 #   -p, --params <绝对路径>     Nav2 参数文件（实车默认 = 迁移链那份, 见 -c）
 #   -c, --controller <auto|minco>   控制器（实车另有 omni 可选, 见下）
 #       --minco                 等价于 --controller minco
@@ -865,7 +866,7 @@ if is_true "$NO_RELOC"; then
   START_RELOC=0
 fi
 
-# 一个模式都没给 (命令行没给、环境变量也没给) -> 默认 --reloc, 实车默认。
+# 未指定模式时按前端选择：ZLIO -> --lio；Point-LIO -> --reloc。
 # 前提是这张地图有先验点云 (maps/pcd/<地图名>_mapframe.pcd); 没有的话下面 resolve 会
 # 报错并告诉你缺哪份、怎么生成。想回到"静态 map->odom"用 --no-reloc 或 --lio。
 if [ $((SLAM_ON + RELOC_ON + LIO_ON + STATIC_ON)) -eq 0 ] && [ "$MODE_GIVEN" = "0" ]; then
@@ -1801,6 +1802,7 @@ for i in "${!STEP_TITLES[@]}"; do
 
   if process_running "$pattern"; then
     echo "[跳过] 已检测到正在运行的进程: $title"
+    echo "       本次启动参数不会应用到已有进程；修改地图/配置后请先 --stop 再启动。"
     continue
   fi
 

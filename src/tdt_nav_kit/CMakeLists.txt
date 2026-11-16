@@ -29,6 +29,7 @@ ament_auto_add_library(${PROJECT_NAME} SHARED
   vendor/src/MinimumSnapOsqp/sfcSquare.cpp
   src/costmap_converter.cpp
   src/path_utils.cpp
+  src/planner_geometry.cpp
   src/tdt_global_planner.cpp
   src/tdt_smoother.cpp
 )
@@ -81,6 +82,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_path_utils test/test_path_utils.cpp)
   target_link_libraries(test_path_utils ${PROJECT_NAME})
+
+  ament_add_gtest(test_planner_geometry test/test_planner_geometry.cpp)
+  target_link_libraries(test_planner_geometry ${PROJECT_NAME})
 endif()
 
 # 本包不启用 ament_lint_auto：vendored 上游源码会触发格式/版权 lint 失败。

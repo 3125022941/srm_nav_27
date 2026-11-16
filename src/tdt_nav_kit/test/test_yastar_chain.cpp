@@ -98,6 +98,17 @@ TEST(YAstarChainTest, FailedSearchReturnsStartOnlyPath)
   EXPECT_LT(path.size(), 2u);
 }
 
+TEST(YAstarChainTest, DiagonalCannotCrossBetweenTwoBlockedSideCells)
+{
+  std::vector<int8_t> data(kWidth * kHeight, 1);
+  data[2 * kWidth + 2] = 0;
+  data[3 * kWidth + 3] = 0;
+  YAstar planner;
+  configurePlanner(planner, data);
+  const auto path = planner.search(worldOf(2, 2), worldOf(3, 3));
+  EXPECT_LT(path.size(), 2u);
+}
+
 TEST(YAstarChainTest, SdfMatchesBruteForceNearestObstacle)
 {
   auto data = makeMap();

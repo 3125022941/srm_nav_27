@@ -89,6 +89,8 @@ CostmapSnapshot makeSnapshotFromCostmap(
     throw std::invalid_argument("makeSnapshotFromCostmap: costmap is null");
   }
 
+  auto * mutex = costmap->getMutex();
+  std::lock_guard<std::recursive_mutex> lock(*mutex);
   CostmapSnapshot snap;
   snap.size_x = static_cast<int>(costmap->getSizeInCellsX());
   snap.size_y = static_cast<int>(costmap->getSizeInCellsY());
@@ -106,11 +108,7 @@ CostmapSnapshot makeSnapshotFromCostmap(
   // getCharMap() 是行主序 y * size_x + x；YAstar::TMatrix 也是 RowMajor，
   // 线性索引同为 y * cols + x，因此这里顺序拷贝即可，**不做 Y 翻转**。
   // 上游 main.cpp 的翻转只因读 PNG（图像左上原点），与本链路无关。
-  {
-    auto * mutex = costmap->getMutex();
-    std::lock_guard<std::recursive_mutex> lock(*mutex);
-    snap.data = convertCostmapCells(costmap->getCharMap(), count, cfg);
-  }
+  snap.data = convertCostmapCells(costmap->getCharMap(), count, cfg);
 
   return snap;
 }

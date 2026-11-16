@@ -20,14 +20,15 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <nav2_core/exceptions.hpp>
 #include <nav2_util/node_utils.hpp>
 #include <pluginlib/class_list_macros.hpp>
-#include <memory>
 #include <stdexcept>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <vector>
 
+#include "srm27_minco_controller/local_path.hpp"
 #include "srm27_minco_core/kinematics.hpp"
 
 namespace srm27_minco_controller
@@ -500,7 +501,8 @@ bool MincoMpcController::loadParameters(std::string * _reason)
     return false;
   }
   if (polynomial_order_ != Trajectory2D::kPolynomialOrder) {
-    return fail("only the quintic MINCO representation (polynomial_order: 5) is supported");
+    return fail(
+      "only the quintic MINCO representation (polynomial_order: 5) is supported");
   }
   if (!(replan_frequency_ > 0.0) || !std::isfinite(replan_frequency_)) {
     return fail("replan_frequency must be positive");
@@ -1012,6 +1014,7 @@ bool MincoMpcController::handlePlanningFailure(const State2D & _state, double _n
   }
 
   Eigen::Vector2d escape_velocity = Eigen::Vector2d::Zero();
+  recovery_decider_.setPreferredDirection(forwardPathDirection(planning_path_, _state.position()));
   const srm27_minco_core::RecoveryDecision decision =
     recovery_decider_.decide(_now_stamp, _state.position(), *esdf_, &escape_velocity);
 
@@ -1158,6 +1161,7 @@ bool MincoMpcController::updateRecovery(
   // 每次 tick 都调用 calculateEscapeVelocity），所以必须把当前位置与距离场传进去。
   // 距离场暂时不可用时传一个空对象：decider 会保留上一周期的方向，而不是输出零速。
   const srm27_minco_core::Esdf2D empty_esdf;
+  recovery_decider_.setPreferredDirection(forwardPathDirection(planning_path_, _state.position()));
   const srm27_minco_core::RecoveryExit exit = recovery_decider_.updateRecovery(
     _now_stamp, _state.position(), esdf_ ? *esdf_ : empty_esdf, clearance, &escape_velocity,
     /*_log_transitions=*/recovery_command_count_ == 0);
@@ -1375,7 +1379,7 @@ void MincoMpcController::publishRecoveryDebug(
     const int max_steps = static_cast<int>(std::ceil(2.0 * reach / kPathStep));
     srm27_minco_core::RecoveryDecider::traceEscapePath(
       *esdf_, Eigen::Vector2d(_state.x, _state.y), recovery_decider_.config(), kPathStep,
-      max_steps, &escape_path);
+      max_steps, &escape_path, recovery_decider_.preferredDirection());
     if (escape_path.size() >= 2) {
       visualization_msgs::msg::Marker path_marker;
       path_marker.header.frame_id = planning_frame_;
@@ -1603,7 +1607,14 @@ geometry_msgs::msg::TwistStamped MincoMpcController::stopCommand(
   diagnostics_.yaw_reference = 0.0;
   diagnostics_.wz_clamp_reason = "stop";
   diagnostics_.command_frame = command_frame_;
-  has_previous_input_ = false;
+  // Zero is an executed command, not missing command history. Dropping it here
+  // used to disable both the QP's first-step change constraint and the output
+  // limiter when navigation resumed after a rejected trajectory. With a future
+  // command selected, that first resumed tick could jump straight to cruise speed.
+  previous_applied_input_ = Eigen::VectorXd::Zero(mpc_model_.inputDim());
+  has_previous_input_ = true;
+  last_control_stamp_ = _now_stamp;
+  has_last_control_stamp_ = true;
   return command;
 }
 
@@ -1611,8 +1622,6 @@ geometry_msgs::msg::TwistStamped MincoMpcController::computeVelocityCommands(
   const geometry_msgs::msg::PoseStamped & _pose, const geometry_msgs::msg::Twist & _velocity,
   nav2_core::GoalChecker * _goal_checker)
 {
-  (void)_pose;
-
   const double control_begin = steadyNow();
   auto node = parent_.lock();
   if (!node) {
@@ -1676,6 +1685,27 @@ geometry_msgs::msg::TwistStamped MincoMpcController::computeVelocityCommands(
     return fail("state unavailable: " + reason);
   }
   diagnostics_.state_age = std::max(0.0, now_stamp - state.sample_stamp);
+
+  // Match Nav2's goal checker: use its measured robot pose, not StateAdapter's
+  // latency-extrapolated MPC state, which can enter the goal circle early.
+  geometry_msgs::msg::PoseStamped measured_pose = _pose;
+  if (measured_pose.header.frame_id.empty()) {
+    return fail("controller requires a robot pose frame");
+  }
+  if (measured_pose.header.frame_id != planning_frame_) {
+    try {
+      measured_pose = tf_->transform(measured_pose, planning_frame_, tf2::durationFromSec(0.0));
+    } catch (const tf2::TransformException & exception) {
+      return fail(std::string("robot pose transform failed: ") + exception.what());
+    }
+  }
+  if (!std::isfinite(measured_pose.pose.position.x) ||
+    !std::isfinite(measured_pose.pose.position.y))
+  {
+    return fail("robot pose is non-finite");
+  }
+  const Eigen::Vector2d measured_position(
+    measured_pose.pose.position.x, measured_pose.pose.position.y);
 
   // 2) 定位重置：作废旧轨迹与热启动。
   if (state_adapter_.resetCount() != last_odom_reset_count_) {
@@ -1759,29 +1789,13 @@ geometry_msgs::msg::TwistStamped MincoMpcController::computeVelocityCommands(
   // 7) 重规划请求。
   requestReplan(state, now_stamp, control_begin);
 
-  // 8) 终点急停：一进入目标检查器的成功区域就立即给零速，不再追踪精确末点。
-  //
-  // 这一步必须优先于跟踪已提交轨迹。MPC 的代价里一直带着"到精确末点的位置误差"
-  // （mpc.q_position），即使车已经进入目标检查器的 xy 容差，控制器也会继续把它往末点上修；
-  // 一旦冲过末点就反向修正，再冲、再修正 —— 现场就是终点附近来回走
-  // （2026-10-09 实车日志）。
-  //
-  // 逻辑刻意做得最简单：**进容差 → 立即零速**，没有任何后段控制。
-  //  * 进入只看位置、不看速度：轨迹本来就是停在末点的停车剖面，车进容差圈时的速度是
-  //    sqrt(2*a*tol)（实车约 1.5 m/s，几乎满速）；任何"先慢下来再接管"的门槛等于永不接管。
-  //  * 接管后**不再输出任何朝末点或背向末点的速度**，所以控制器再也不可能主动把车
-  //    带出容差 —— 振荡在逻辑上不可能出现。
-  //  * 停车距离完全由底盘自己决定（急刹），"停在哪里"取决于底盘减速能力，见 §5 制动辨识。
-  //    容差对末点是对称的：在距末点 tol 处给零，滑行 v²/(2*a_chassis) 后停下，
-  //    只要 v²/(2*a_chassis) <= 2·tol 就仍落在末点 ±tol 内（实车条件 a >= 1.41 m/s²）。
-  //
-  // 安全校验全部保留：已提交轨迹的复验（步骤 6）照常执行；规划请求（步骤 7）继续提交，
-  // 解除急停时立刻有新鲜轨迹可用。
+  // 8) 终点停车必须使用 Nav2 实测位姿，与目标检查器的成功区域一致。
+  // MPC 使用的 state 已按延迟外推，不能用它提前锁停；滞回也不能把车锁在
+  // 成功圈外。轨迹安全复验与重规划仍照常运行，退出停车保持后可恢复跟踪。
   {
     double distance_to_goal = std::numeric_limits<double>::infinity();
     if (!planning_path_.empty()) {
-      const Eigen::Vector2d position(state.x, state.y);
-      distance_to_goal = (planning_path_.back() - position).norm();
+      distance_to_goal = (planning_path_.back() - measured_position).norm();
     }
     // 进入阈值与目标检查器同源：优先读它的 xy 容差，读不到才退回 terminal_reached_radius。
     double goal_tolerance = 0.0;
@@ -1799,14 +1813,15 @@ geometry_msgs::msg::TwistStamped MincoMpcController::computeVelocityCommands(
     if (terminal_active) {
       RCLCPP_INFO_THROTTLE(
         (parent_.lock())->get_logger(), *(parent_.lock())->get_clock(), 2000,
-        "MincoMpcController: 终点急停中 (距末点 %.3f m <= %.3f m)，等待目标检查器判定停稳",
-        distance_to_goal, terminal_stop_.entryTolerance());
+        "MincoMpcController: 终点停车保持 (实测距末点 %.3f m，进入 %.3f m，退出 %.3f m)，等待停稳",
+        distance_to_goal, terminal_stop_.entryTolerance(), terminal_stop_.exitTolerance());
       geometry_msgs::msg::TwistStamped command = stopCommand(node, "terminal_stop", now_stamp);
       // 小陀螺（kSpin + 新鲜自转请求）: 终点急停只刹平移、保留自转 —— 持续自转是
       // 操作手要的驻车状态（方案 §4.1.2 阶段二）。导航会话结束后 wz 自然停止
       // （mux 零速兜底），不影响安全性。
       if (yaw_mode_ == YawMode::kSpin && diagnostics_.spin_request_fresh) {
         command.twist.angular.z = diagnostics_.spin_request;
+        previous_applied_input_(2) = command.twist.angular.z;
       }
       // stopCommand 的 command_owner 统一是 "stop"；这里改成更具体的原因，
       // 现场才能从 diagnostics 直接区分"终点急停"与其它停车。
@@ -1966,16 +1981,37 @@ geometry_msgs::msg::TwistStamped MincoMpcController::computeVelocityCommands(
       velocity_odom = previous_odom + delta.normalized() * max_delta;
       velocity_command = velocityInCommandFrame(velocity_odom, yaw_at_actuation, command_frame_mode_);
     }
-    // 下周期的差分基准必须是本周期限幅后的输出，而不是 MPC 未执行的原始请求。
-    previous_applied_input_(0) = velocity_odom.x();
-    previous_applied_input_(1) = velocity_odom.y();
-    previous_applied_input_(2) = omega_command;
-  } else {
-    previous_applied_input_ = Eigen::VectorXd::Zero(mpc_model_.inputDim());
-    previous_applied_input_(0) = velocity_odom.x();
-    previous_applied_input_(1) = velocity_odom.y();
-    previous_applied_input_(2) = omega_command;
   }
+  // The nominal MINCO path is collision-checked, but the actually selected MPC
+  // velocity can approach an obstacle faster or cut inside that path. Bound its
+  // inward component by the available reaction-and-braking distance; preserve
+  // tangential/outward velocity and the original 2.6m/s ceiling.
+  const auto execution_clearance = esdf_->query(measured_position.x(), measured_position.y());
+  if (!execution_clearance.valid) {
+    return fail("execution clearance unavailable");
+  }
+  const auto & safety = validator_.config();
+  const Eigen::Vector2d guarded_velocity = clearanceLimitedVelocity(
+    velocity_odom, execution_clearance.gradient, execution_clearance.distance,
+    safety.robot_radius + safety.clearance_margin, safety.braking_deceleration,
+    safety.reaction_latency);
+  const bool clearance_limited = (guarded_velocity - velocity_odom).norm() > 1.0e-6;
+  if (clearance_limited) {
+    velocity_odom = guarded_velocity;
+    velocity_command = velocityInCommandFrame(velocity_odom, yaw_at_actuation, command_frame_mode_);
+    RCLCPP_INFO_THROTTLE(
+      node->get_logger(), *node->get_clock(), 2000,
+      "MincoMpcController: 执行净空约束生效 (净空 %.3f m，要求 %.3f m，平移 %.3f m/s)",
+      execution_clearance.distance, safety.robot_radius + safety.clearance_margin,
+      velocity_odom.norm());
+  }
+  // Store the velocity that is really emitted, including clearance filtering.
+  if (previous_applied_input_.size() != mpc_model_.inputDim()) {
+    previous_applied_input_ = Eigen::VectorXd::Zero(mpc_model_.inputDim());
+  }
+  previous_applied_input_(0) = velocity_odom.x();
+  previous_applied_input_(1) = velocity_odom.y();
+  previous_applied_input_(2) = omega_command;
   has_previous_input_ = true;
   last_control_stamp_ = now_stamp;
   has_last_control_stamp_ = true;
@@ -1999,7 +2035,7 @@ geometry_msgs::msg::TwistStamped MincoMpcController::computeVelocityCommands(
   diagnostics_.yaw_reference = reference.z_ref(2, 0);
   diagnostics_.wz_clamp_reason = wz_clamp_reason;
   diagnostics_.command_frame = command_frame_;
-  diagnostics_.command_owner = "navigation";
+  diagnostics_.command_owner = clearance_limited ? "navigation_clearance_guard" : "navigation";
   diagnostics_.command_age = std::max(0.0, now_stamp - trajectory->generated_stamp);
   diagnostics_.stop_reason = "none";
   if (stopping_) {

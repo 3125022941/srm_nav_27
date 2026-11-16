@@ -16,6 +16,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
 #include "tdt_nav_kit/costmap_converter.hpp"
+#include "tdt_nav_kit/planner_geometry.hpp"
 #include "tf2_ros/buffer.h"
 
 namespace tdt_nav_kit
@@ -57,6 +58,7 @@ private:
   std::string plugin_name_;
   rclcpp::Clock::SharedPtr clock_;
   bool active_{false};
+  StableGoal stable_goal_;
 
   ConverterConfig converter_cfg_;
   int mask_num_layers_{1};

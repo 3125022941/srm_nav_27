@@ -84,6 +84,7 @@ public:
   void setSpeedLimit(const double & _speed_limit, const bool & _percentage) override;
 
 private:
+  friend struct CommandContinuityTestPeer;
   /// \brief 声明并读取参数；非法配置直接失败并报清楚原因。
   bool loadParameters(std::string * _reason);
 

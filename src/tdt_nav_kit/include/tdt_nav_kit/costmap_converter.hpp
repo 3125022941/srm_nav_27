@@ -22,7 +22,7 @@ namespace tdt_nav_kit
 
 struct ConverterConfig
 {
-  /// 代价 >= 该值视为障碍。默认 252 = nav2_costmap_2d::MAX_NON_OBSTACLE。
+  /// 代价 > 该值视为障碍。默认 252 = nav2_costmap_2d::MAX_NON_OBSTACLE。
   /// Nav2 inflation 层产生 1..252，交给上游 YAstar 的势场处理，不在此判障碍。
   int occupancy_threshold{252};
   /// NO_INFORMATION(255) 的处理方式，默认按障碍。

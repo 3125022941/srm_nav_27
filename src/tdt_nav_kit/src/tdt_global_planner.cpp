@@ -22,62 +22,6 @@ namespace tdt_nav_kit
 namespace
 {
 
-/// 只在配置的欧氏距离内吸附到最近的自由栅格中心。
-Eigen::Vector2f snapToSafe(
-  const CostmapSnapshot & map,
-  const geometry_msgs::msg::Point & point,
-  float max_radius,
-  const char * endpoint)
-{
-  const Eigen::Vector2f world(
-    static_cast<float>(point.x), static_cast<float>(point.y));
-  const Eigen::Vector2f origin(map.origin_x, map.origin_y);
-  const Eigen::Vector2f cell = (world - origin) / map.resolution;
-  const auto is_free = [&map](int x, int y) {return map.data[y * map.size_x + x] == 0;};
-  if (cell.x() >= 0.0f && cell.x() < map.size_x &&
-    cell.y() >= 0.0f && cell.y() < map.size_y &&
-    is_free(static_cast<int>(cell.x()), static_cast<int>(cell.y())))
-  {
-    return world;
-  }
-
-  const float radius_cells = max_radius / map.resolution;
-  const auto first_cell = [radius_cells](float coordinate, int size) {
-      return static_cast<int>(std::clamp(coordinate - radius_cells, 0.0f, float(size)));
-    };
-  const auto last_cell = [radius_cells](float coordinate, int size) {
-      return static_cast<int>(std::clamp(coordinate + radius_cells, -1.0f, float(size - 1)));
-    };
-  Eigen::Vector2f snapped = world;
-  float best_distance = max_radius;
-  bool found = false;
-  if (cell.allFinite()) {
-    const int x0 = first_cell(cell.x(), map.size_x);
-    const int x1 = last_cell(cell.x(), map.size_x);
-    const int y0 = first_cell(cell.y(), map.size_y);
-    const int y1 = last_cell(cell.y(), map.size_y);
-    for (int y = y0; y <= y1; ++y) {
-      for (int x = x0; x <= x1; ++x) {
-        if (!is_free(x, y)) {
-          continue;
-        }
-        const Eigen::Vector2f center = origin + map.resolution * Eigen::Vector2f(x + 0.5f, y + 0.5f);
-        const float distance = (center - world).norm();
-        if (distance <= best_distance) {
-          best_distance = distance;
-          snapped = center;
-          found = true;
-        }
-      }
-    }
-  }
-  if (found) {
-    return snapped;
-  }
-  throw nav2_core::PlannerException(
-    std::string("TdtGlobalPlanner: no free cell within tolerance of ") + endpoint);
-}
-
 /// 上游路径点只有 xy，无时间戳 / 朝向 / frame_id，这里补齐 Path 所需字段。
 nav_msgs::msg::Path toPath(
   const std::vector<Eigen::Vector2f> & points,
@@ -135,6 +79,7 @@ void TdtGlobalPlanner::configure(
   costmap_ros_ = costmap_ros;
   plugin_name_ = name;
   clock_ = node->get_clock();
+  stable_goal_.reset();
 
   declare_parameter_if_not_declared(
     node, plugin_name_ + ".occupancy_threshold",
@@ -196,6 +141,7 @@ void TdtGlobalPlanner::configure(
 
 void TdtGlobalPlanner::cleanup()
 {
+  stable_goal_.reset();
   costmap_ros_.reset();
   tf_.reset();
   node_.reset();
@@ -209,6 +155,7 @@ void TdtGlobalPlanner::activate()
 void TdtGlobalPlanner::deactivate()
 {
   active_ = false;
+  stable_goal_.reset();
 }
 
 nav_msgs::msg::Path TdtGlobalPlanner::createPlan(
@@ -246,10 +193,19 @@ nav_msgs::msg::Path TdtGlobalPlanner::createPlan(
     cost_inflate_radius_, [](float x) { return x < 0.60f ? 100.0f : 0.0f; });
   planner.initCostMap();
 
-  const Eigen::Vector2f s =
-    snapToSafe(snap, start.pose.position, save_point_max_radius_, "start");
-  const Eigen::Vector2f g =
-    snapToSafe(snap, goal.pose.position, save_point_max_radius_, "goal");
+  const auto resolved_start = nearestFreePoint(
+    snap, Eigen::Vector2f(start.pose.position.x, start.pose.position.y), save_point_max_radius_);
+  const auto resolved_goal = stable_goal_.resolve(
+    snap, Eigen::Vector2f(goal.pose.position.x, goal.pose.position.y), save_point_max_radius_);
+  if (!resolved_start) {
+    throw nav2_core::PlannerException("TdtGlobalPlanner: no free start within configured tolerance");
+  }
+  if (!resolved_goal) {
+    throw nav2_core::PlannerException(
+      "TdtGlobalPlanner: goal unavailable; a blocked resolved goal is not moved during replanning");
+  }
+  const Eigen::Vector2f s = *resolved_start;
+  const Eigen::Vector2f g = *resolved_goal;
   setup_ms = (clock_->now() - t_begin).seconds() * 1000.0;
   const auto t_search = clock_->now();
 
@@ -265,20 +221,28 @@ nav_msgs::msg::Path TdtGlobalPlanner::createPlan(
 
   // Humble 的 createPlan 没有 cancel_checker 参数，取消由 planner_server 在
   // 动作层处理；这里不做主动取消检查。
-  // 上游 search() 失败时返回「仅含 start 的单点路径」，而不是空数组。
-  if (path.size() < 2) {
+  // 上游搜索失败与起终点同格都返回单点；先区分两者，再转换到 Nav2 栅格中心。
+  path = nav2PathFromYastar(snap, path, s, g);
+  if (!pathIsFree(snap, path)) {
     throw nav2_core::PlannerException(
-      "TdtGlobalPlanner: YAstar returned a start-only path (no feasible route)");
+      "TdtGlobalPlanner: YAstar returned no collision-free route");
   }
 
+  const auto unsimplified = path;
   path = planner.simplifyPath(path, simplify_epsilon_);
   path = planner.simplifyPathHypot(path);
-  if (path.size() < 2) {
-    throw nav2_core::PlannerException("TdtGlobalPlanner: path collapsed during simplification");
+  // Vendor simplifiers use rasterized line checks, which can miss a cell touched
+  // at a corner. Keep the validated search route if a shortcut crosses a cell.
+  if (!pathIsFree(snap, path)) {
+    path = unsimplified;
   }
 
+  const auto dense = resamplePath(path, path_resample_step_, 10000);
+  if (!pathIsFree(snap, dense)) {
+    throw nav2_core::PlannerException("TdtGlobalPlanner: resampled path crosses an occupied cell");
+  }
   return toPath(
-    resamplePath(path, path_resample_step_, 10000),
+    dense,
     costmap_ros_->getGlobalFrameID(), node->now(), orientation_mode_);
 }
 

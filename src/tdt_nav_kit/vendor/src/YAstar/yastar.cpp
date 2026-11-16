@@ -846,6 +846,12 @@ std::vector<Eigen::Vector2f> YAstar::search(Eigen::Vector2f start, Eigen::Vector
             int nx = x + neighour[i][1], ny = y + neighour[i][0];
             size_t nindex = ny * nodeMap.cols() + nx;
             if (nx >= 0 && nx < nodeMap.cols() && ny >= 0 && ny < nodeMap.rows()){
+                // [TDT-NAV-KIT PATCH P9] A diagonal segment touches both side
+                // cells. Do not cut a blocked corner between inflated obstacles.
+                if (i >= 4 &&
+                    (!std::isfinite(costMap(y, nx)) || !std::isfinite(costMap(ny, x)))) {
+                    continue;
+                }
                 if (costMap.data()[nindex] < std::numeric_limits<float>::infinity()){
                     auto &nd = nodeMap(ny, nx);
                     if (nd.closed)

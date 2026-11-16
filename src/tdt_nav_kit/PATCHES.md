@@ -147,6 +147,19 @@ RESULT: PASS
 
 即：P1–P5、P8 全部生效后，`getSDF()` 与独立实现的「到最近障碍格欧氏距离 × resolution」**逐元素完全一致（误差 0）**，`search()` / `simplifyPath()` / `simplifyPathHypot()` / 越界失败返回单点路径的行为均符合预期。插件包装层与 ROS 侧签名仍需在 ROS 2 Humble 构建机上验证。
 
+## P9 · Nav2 栅格中心、稳定末点与连续碰撞检查（2026-11-16）
+
+YAstar 回溯输出 `origin + index * resolution`，对应栅格角点。Nav2 包装层现在将搜索点
+转换到栅格中心，保留实际起点和已解析目标的精确坐标。同一栅格内的短距离目标也能返回
+有效路径。目标吸附只在目标改变时重新选择；同一目标重规划期间沿用原吸附点。如果该点
+后来被障碍占据，返回规划失败，避免静默移动末点并触发 MINCO 会话重置。
+
+`vendor/src/YAstar/yastar.cpp` 的八邻域搜索新增对角边相邻两格的占据检查，禁止从障碍格角
+穿过。包装层另对连续线段与障碍单元做相交检查；若简化产生不安全捷径，保留未简化路径。
+Costmap 的尺寸、原点与数据也在同一次互斥锁内读取，避免地图更新时混用不同几何版本。
+
+回归：`test_planner_geometry` 与 `test_yastar_chain`。
+
 ## 未打补丁的已知上游问题（阶段二处理，登记备查）
 
 - `SolveInput` 默认 `backend=Close`、`collisionIteration=2`、`normTime=false`、`TL=1 s`；README 示例值与之不同，插件必须显式 set 全套。

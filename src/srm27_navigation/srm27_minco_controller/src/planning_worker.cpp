@@ -176,8 +176,15 @@ PlanningResult PlanningWorker::plan(const PlanningRequest & _request)
   path_config.max_speed = _request.limits.max_linear_speed;
   path_config.braking_deceleration = _request.validator_config.braking_deceleration;
   path_config.reaction_latency = _request.validator_config.reaction_latency;
+  // Global inflation and the local conservative ESDF can disagree by a cell.
+  // Seed away from that boundary before clipping; otherwise a smoothed corner
+  // is truncated at the hard threshold and repeatedly creates invalid curves.
+  const auto reference_path = improvePathClearance(
+    _request.path, *_request.esdf,
+    path_config.required_clearance + _request.minco_config.optimization_clearance_margin,
+    _request.minco_config.optimization_clearance_margin);
   const LocalPathResult clipped = extractLocalPath(
-    _request.path, _request.state.position(), *_request.esdf, path_config,
+    reference_path, _request.state.position(), *_request.esdf, path_config,
     _request.terminal_is_global_goal);
   const auto & local_path = clipped.points;
   const bool terminal_reached = clipped.end == LocalPathEnd::kGlobalGoal;

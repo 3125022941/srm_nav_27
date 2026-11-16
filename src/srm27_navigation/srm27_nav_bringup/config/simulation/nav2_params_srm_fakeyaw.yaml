@@ -683,7 +683,9 @@ controller_server:
         # 净空 0.3737~0.3798 对 required 0.38），轨迹被整条丢弃、车来回跑。
         # 与 nav2_params_srm_minco.yaml 同步（2026-10-14 校正）：这里原本误写成 50.0（米），
         # 相当于把优化目标抬到硬阈值上方 50 m，障碍项形同被关掉；正确量级是 0.1 m。
-        optimization_clearance_margin: 0.1
+        # 在原 0.10 m 优化余量上再留 0.05 m 高速跟踪储备；实际包络半径与
+        # clearance_margin 的硬阈值仍为 0.33+0.05 m，速度/加速度上限不变。
+        optimization_clearance_margin: 0.15
         resample_step: 0.10                             # 前端弧长重采样步长（米）
         corner_speed_ratio: 0.8                       # 转角处最低速度比例
         min_pieces: 2                                   # 最少段数
@@ -756,9 +758,10 @@ controller_server:
         # （实测：0.5 m/s 档要求 1.77 s 尚可通过，1.5 m/s 档要求 5.1 s 就必然失败，
         # 现场表现为规划一直失败、车被 recovery 拖来拖去）。**必须按实车制动辨识填写。**
         braking_deceleration: 0.0
-        # 有效反应延迟（秒）。0 = 退化为使用 state_timeout（本文件 0.10 s），
-        # 也就是与改动前完全一致的行为。实车把两者拆开了，原因见实车配置文件。
-        reaction_latency: 0.0
+        # 仿真控制链反应延迟（秒），与允许 LIO 低频更新的 state_timeout=0.50 分开。
+        # 50 Hz 控制/真值里程计加转发留 0.10 s 预算；不能把失联容忍门限当反应延迟，
+        # 否则已能安全停住的短轨迹也会因 0.50+v/a 的时长要求被反复拒绝。
+        reaction_latency: 0.10
       # 脱困（迁移自 navi_minco_bit 的 MincoPlanner.recovery_server.* + 其 FSM 里
       # 硬编码的 0.25/0.40 分诊与成功阈值）。
       #

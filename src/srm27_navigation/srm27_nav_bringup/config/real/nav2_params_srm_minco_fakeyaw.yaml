@@ -1031,7 +1031,7 @@ local_costmap:
         unknown_threshold: 5
         z_resolution: 0.05
         z_voxels: 16
-        min_obstacle_height: 0.0
+        min_obstacle_height: 0.10      # 2026-11-15: 0.25→0.10。0.25 会滤掉低矮障碍（灰色障碍块下半截），导致贴脸才标记；地面误报靠 intensity≥0.1 兜底，需实车复核
         max_obstacle_height: 2.0
         min_obstacle_intensity: 0.1
         max_obstacle_intensity: 2.0
@@ -1043,7 +1043,7 @@ local_costmap:
           # terrain_analysis 实际发布在 odom 系（源码硬编码 frame_id=odom）；
           # 这里仍按上游语义填雷达系，本车对应 livox_imu。
           sensor_frame: livox_imu
-          min_obstacle_height: 0.0
+          min_obstacle_height: 0.10    # 2026-11-15: 0.25→0.10，与层门槛一致；低矮障碍下半截进体素
           max_obstacle_height: 2.0
           # 2026-10-09: 5.0 → 8.0。上面视野放到 4.0 m 之后，若这里仍只收 5 m 内的点，
           # 那 4 m 前瞻的末端几乎贴着“没有障碍数据”的边界，控制器 unknown_is_obstacle=True

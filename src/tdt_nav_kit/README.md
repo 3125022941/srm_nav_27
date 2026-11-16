@@ -170,7 +170,59 @@ ThetaStar 下都遇到 MINCO 局部轨迹超速校验拒绝。按现有实车定
 模式时，保留原来的定位参数。MINCO/MPC 负责局部轨迹和跟踪。取消 `--tdt-planner`
 即可对照原来的 ThetaStar。实车提速前以现场制动辨识结果为准。
 
-## 仿真实测（2026-11-05，Ignition Fortress 无头容器）
+### 2026-11-16 实车短程问题修复
+
+修复了 YAstar 栅格角点与 Nav2 栅格中心之间的半格偏移，路径首尾保留解析后的精确世界坐标。
+同一目标重规划时固定吸附末点；若该点后来被占据，规划失败而不是换一个末点，避免 MINCO
+反复把路径刷新当成新目标。目标改变或规划器重新激活后才重新吸附。路径简化及加密后检查
+连续线段，禁止从障碍格角切过；不安全的简化退回原搜索路径。
+
+MINCO 脱困现在优先考虑最近路径段的前向方向，只有前推整段的距离场有效、净空不下降，且
+末端至少增加 1 cm 净空时才采用；否则保留原梯度/环形搜索。没有降低车体尺寸、未知区域
+处理或正常轨迹的碰撞门槛。`recovery_trigger=path_aligned` 表示该次脱困采用了路径方向。
+
+构建涉及公共恢复接口，需一起更新依赖插件：
+
+```bash
+colcon build --symlink-install --packages-select \
+  srm27_minco_core srm27_minco_controller srm27_nav_plugins tdt_nav_kit
+```
+
+离线回归覆盖目标稳定性、精确端点、对角穿障，以及恢复方向前方有障碍、未知区域和地图边界。
+实车仍需在正确地图定位下重新验证，离线通过不代表已经完成实车到点测试。
+
+## 仿真实测
+
+### 2026-11-16 新建地图与原速净空复测
+
+`maps/227_1116_remap` 保存新地图；`simulation/build_scene.py` 将占据格挤出为简化场景。
+此次修正终点停车判据、停车命令历史，以及局部参考路径在保守 ESDF 边缘被截断的问题。
+输出速度增加沿障碍法向的反应与制动距离约束；切向与向外运动保持原限速。
+优化余量由 0.10 m 调到 0.15 m，硬碰撞阈值仍为 0.33+0.05 m。
+
+最终两次从初始位置启动的复测均为 4/4 到达，Nav2 与控制器恢复次数均为 0。
+最小包络裕量分别为 8.94 cm、7.99 cm（原记录 2.64 cm）；实测峰值为
+2.48 m/s、2.43 m/s。限速 2.6 m/s、加速度上限 7 m/s² 未改。核心与控制器
+302 项功能测试通过；现有 clang 配置缺失，未将 lint 计入通过项。
+验证使用真值里程计和 0.33 m 圆形包络，按占据格边界回放计算几何距离；目标容差
+仍为 0.5 m。这些结果不代表已完成实车验证。
+
+复现（先按上面的构建命令更新依赖，在工作区根目录执行）：
+
+```bash
+maps/227_1116_remap/simulation/run_clearance.sh
+# 另一终端：
+source install/setup.bash
+ROS_DOMAIN_ID=54 python3 maps/227_1116_remap/simulation/verify_navigation.py \
+  --timeout 45 --out log_diag/clearance_retest
+python3 maps/227_1116_remap/simulation/analyze_clearance.py log_diag/clearance_retest
+```
+
+入口会重建当前路径下的场景资源；默认无 Gazebo GUI、保留 RViz，使用独立 ROS 域 54。
+请先停止已有同域仿真，避免重复实例。最终汇总和对比图位于
+`maps/227_1116_remap/simulation/validation/`。原始高频日志仍保留本地 `log_diag/`。
+
+### 2026-11-05 · Ignition Fortress 无头容器
 
 在容器里跑起完整链路：Ignition Fortress 6.18（`rmuc_2025` 世界 + `rmuc_2025.yaml` 地图）
 + Nav2（`nav2_params_srm_tdt_smooth.yaml`），机器人出生点改到 (3.4, 5.0)
