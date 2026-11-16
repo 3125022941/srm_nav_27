@@ -169,6 +169,30 @@ check_spin_rate() {
 check_spin_rate "底盘自转速度" "$CHASSIS_SPIN_WZ"
 check_spin_rate "云台自转速度" "$GIMBAL_SPIN_WZ"
 
+# 启动动作会在子终端中 source 同一份工作区；先检查安装结果，避免
+# launch 解析到一半才因依赖包缺失而失败。
+require_pkg_from_ws() {
+  local pkg="$1" prefix
+  prefix="$(bash -c "source '$WS_DIR/install/setup.bash' >/dev/null 2>&1; ros2 pkg prefix '$pkg' 2>/dev/null" || true)"
+  if [ -z "$prefix" ]; then
+    die "找不到包 $pkg，请先在 $WS_DIR 构建工作区"
+  fi
+  case "$prefix" in
+    "$WS_DIR"/*) ;;
+    *) die "包 $pkg 解析到了其它工作区: $prefix（请只 source $WS_DIR/install/setup.bash）" ;;
+  esac
+}
+
+if [ "$ACTION" = "start" ] && [ "$DRY_RUN" != "1" ]; then
+  [ -f "$WS_DIR/install/setup.bash" ] || die "未找到 $WS_DIR/install/setup.bash，请先构建工作区"
+  for _pkg in srm27_gazebo_simulator srm27_nav_bringup srm27_chassis_control \
+    ign_sim_pointcloud_tool point_lio loam_interface sensor_scan_generation \
+    terrain_analysis terrain_analysis_ext pointcloud_to_laserscan \
+    srm27_nav_plugins srm27_omni_pid_controller; do
+    require_pkg_from_ws "$_pkg"
+  done
+fi
+
 # ---------------------------------------------------------------- --collect
 if [ "$ACTION" = "collect" ]; then
   [ -f "$PCD_SRC" ] || die "找不到点云文件: $PCD_SRC
