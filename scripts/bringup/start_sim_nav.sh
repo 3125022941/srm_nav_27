@@ -428,7 +428,8 @@ require_pkg_from_ws() {
   local pkg="$1" prefix
   prefix="$(bash -c "source '$WS_DIR/install/setup.bash' >/dev/null 2>&1; ros2 pkg prefix '$pkg' 2>/dev/null" || true)"
   if [ -z "$prefix" ]; then
-    echo "[错误] 找不到包 $pkg，请确认 $WS_DIR/install/setup.bash 可用。" >&2
+    echo "[错误] 找不到包 $pkg，请先构建当前工作区。" >&2
+    echo "       cd $WS_DIR && colcon build --symlink-install --packages-up-to $pkg" >&2
     return 1
   fi
   case "$prefix" in
@@ -444,7 +445,9 @@ require_pkg_from_ws() {
 }
 
 if [ "$DRY_RUN" != "1" ]; then
-  for _pkg in srm27_nav_bringup srm27_chassis_control srm27_minco_controller; do
+  for _pkg in srm27_nav_bringup srm27_nav_tools srm27_chassis_control \
+    srm27_minco_controller srm27_minco_core srm27_nav_plugins \
+    srm27_costmap_plugins srm27_nav_behavior_plugins; do
     require_pkg_from_ws "$_pkg" || exit 1
   done
 fi

@@ -1216,7 +1216,8 @@ require_pkg_from_ws() {
   local pkg="$1" prefix
   prefix="$(bash -c "source '$WS_DIR/install/setup.bash' >/dev/null 2>&1; ros2 pkg prefix '$pkg' 2>/dev/null" || true)"
   if [ -z "$prefix" ]; then
-    echo "[错误] 找不到包 $pkg, 请确认 $WS_DIR/install/setup.bash 可用。" >&2
+    echo "[错误] 找不到包 $pkg, 请先构建当前工作区。" >&2
+    echo "       cd $WS_DIR && colcon build --symlink-install --packages-up-to $pkg" >&2
     return 1
   fi
   case "$prefix" in
@@ -1232,7 +1233,8 @@ require_pkg_from_ws() {
 }
 
 if [ "$DRY_RUN" != "1" ]; then
-  WS_CHECK_PKGS=(srm27_nav_bringup srm27_nav_protocol)
+  WS_CHECK_PKGS=(srm27_nav_bringup srm27_nav_tools srm27_nav_protocol
+                 srm27_nav_plugins srm27_costmap_plugins srm27_nav_behavior_plugins)
   if [ "$CONTROLLER" = "minco" ]; then
     WS_CHECK_PKGS+=(srm27_minco_controller srm27_minco_core)
   fi
@@ -1241,7 +1243,9 @@ if [ "$DRY_RUN" != "1" ]; then
     WS_CHECK_PKGS+=(srm27_chassis_control)
   fi
   if [ "$LIO_FRONTEND" = "zlio" ]; then
-    WS_CHECK_PKGS+=(frontend localization_interfaces)
+    WS_CHECK_PKGS+=(frontend localization_interfaces srm27_localization_adapter)
+  else
+    WS_CHECK_PKGS+=(point_lio loam_interface sensor_scan_generation)
   fi
   for _pkg in "${WS_CHECK_PKGS[@]}"; do
     require_pkg_from_ws "$_pkg" || exit 1

@@ -734,6 +734,46 @@ if [ "$DRY_RUN" != "1" ] && [ ! -f "$WS_DIR/install/setup.bash" ]; then
   exit 1
 fi
 
+# 建图 launch 会直接加载这些包；在启动前检查同一工作区，避免把旧 overlay
+# 与当前源码混用，或等到 launch 内部才报 PackageNotFoundError。
+require_pkg_from_ws() {
+  local pkg="$1" prefix
+  prefix="$(bash -c "source '$WS_DIR/install/setup.bash' >/dev/null 2>&1; ros2 pkg prefix '$pkg' 2>/dev/null" || true)"
+  if [ -z "$prefix" ]; then
+    echo "[错误] 找不到包 $pkg, 请先构建当前工作区。" >&2
+    echo "       cd $WS_DIR && colcon build --symlink-install --packages-up-to $pkg" >&2
+    return 1
+  fi
+  case "$prefix" in
+    "$WS_DIR"/*) return 0 ;;
+    *)
+      echo "[错误] 包 $pkg 解析到了其它工作区: $prefix" >&2
+      echo "       请只 source $WS_DIR/install/setup.bash。" >&2
+      return 1
+      ;;
+  esac
+}
+
+if [ "$DRY_RUN" != "1" ]; then
+  WS_CHECK_PKGS=(srm27_nav_bringup srm27_nav_tools srm27_nav_plugins
+                 srm27_costmap_plugins srm27_nav_behavior_plugins)
+  if is_true "$USE_CHASSIS"; then
+    WS_CHECK_PKGS+=(srm27_nav_protocol)
+  fi
+  if [ "$LIO_FRONTEND" = "zlio" ]; then
+    WS_CHECK_PKGS+=(frontend localization_interfaces srm27_localization_adapter
+                    sensor_scan_generation)
+  else
+    WS_CHECK_PKGS+=(point_lio loam_interface sensor_scan_generation)
+  fi
+  if is_true "$START_LIDAR"; then
+    WS_CHECK_PKGS+=(livox_ros_driver2)
+  fi
+  for _pkg in "${WS_CHECK_PKGS[@]}"; do
+    require_pkg_from_ws "$_pkg" || exit 1
+  done
+fi
+
 if [ "$DRY_RUN" != "1" ] && ! command -v "$TERMINAL" >/dev/null 2>&1; then
   echo "[错误] 未找到终端程序: $TERMINAL" >&2
   echo "[提示] 可用 TERMINAL=konsole 或 TERMINAL=xfce4-terminal 指定。" >&2
