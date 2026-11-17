@@ -90,3 +90,17 @@ maps/pcd/*.pcd
 # Point-LIO 生成点云：源码包只保留说明文件
 /src/localization/frontend/point_lio/PCD/*
 !/src/localization/frontend/point_lio/PCD/readme.md
+
+# ---------------------------------------------------------------------------
+# 2026-11-16 Z-Localization backend 迁入
+# ---------------------------------------------------------------------------
+# 第三方重依赖（GTSAM 4.2.x 的 deb/解包前缀）与验收用的地图包都由
+# scripts/setup/install_gtsam_4_2.sh / 地图工具在本地生成，不入版本库。
+/.deps/
+# 干净构建验收用的独立 build/install 目录（见 docs/records/2026-11-16-*）。
+/build_clean/
+/install_clean/
+/build_zloc/
+/install_zloc/
+# 先验地图包（keyframes + clouds/*.pcd + 描述子）体积大、按场地生成。
+/data/map_bundles/
