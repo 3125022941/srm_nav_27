@@ -346,7 +346,7 @@ def generate_launch_description():
     # 控制），StoppedGoalChecker 的角速度判停永远不会通过，必须换成只看平移的
     # OmniStoppedGoalChecker（方案 §4.2）。
     effective_goal_checker = PythonExpression([
-        "'srm27_nav_plugins::OmniStoppedGoalChecker' if '", yaw_mode_arg,
+        "'srm27_nav_plugins/OmniStoppedGoalChecker' if '", yaw_mode_arg,
         "' in ('spin', 'xy_only', 'auto', 'se2') "
         "else 'nav2_controller::StoppedGoalChecker'",
     ])

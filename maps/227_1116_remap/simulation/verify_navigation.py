@@ -16,9 +16,9 @@ from nav_msgs.msg import Odometry,Path as NavPath
 from geometry_msgs.msg import PoseStamped,Twist
 from diagnostic_msgs.msg import DiagnosticArray
 from action_msgs.msg import GoalStatus
-P=argparse.ArgumentParser();P.add_argument('--out',default='log_diag/sim_tdt_227_1116_remap');P.add_argument('--goals',default='0,1,2,3');P.add_argument('--timeout',type=float,default=100);args=P.parse_args()
+P=argparse.ArgumentParser();P.add_argument('--out',default='log_diag/sim_tdt_227_1116_remap');P.add_argument('--goals',default='0,1,2,3');P.add_argument('--timeout',type=float,default=100);P.add_argument('--manifest',type=Path);args=P.parse_args()
 SCENE=Path(__file__).resolve().parent;ROOT=SCENE.parents[2];OUT=Path(args.out).resolve();OUT.mkdir(parents=True,exist_ok=True)
-manifest=json.loads((SCENE/'scene_manifest.json').read_text());m=yaml.safe_load(Path(manifest['map_yaml']).read_text());a=np.flipud(np.array(Image.open(Path(manifest['map_yaml']).parent/m['image'])));r=m['resolution'];ox,oy,_=m['origin'];distance=distance_transform_edt(a!=0)*r
+manifest=json.loads((args.manifest or SCENE/'scene_manifest.json').read_text());m=yaml.safe_load(Path(manifest['map_yaml']).read_text());a=np.flipud(np.array(Image.open(Path(manifest['map_yaml']).parent/m['image'])));r=m['resolution'];ox,oy,_=m['origin'];distance=distance_transform_edt(a!=0)*r
 
 def coords(path):return [[p.pose.position.x,p.pose.position.y] for p in path.poses]
 def length(path):return sum(math.dist(a,b) for a,b in zip(path,path[1:]))
@@ -101,7 +101,10 @@ class Probe(Node):
    print('PLAN',json.dumps({k:v for k,v in result.items() if k not in ['raw_path','smoothed_path']}),flush=True)
    goal=NavigateToPose.Goal();goal.pose=self.pose(spec['xy']);self.feedback=None
    handle=self.wait(self.nav.send_goal_async(goal,feedback_callback=lambda f:setattr(self,'feedback',f.feedback)),5)
-   if not handle or not handle.accepted:result['status']='REJECTED';self.results.append(result);self.save();continue
+   if not handle or not handle.accepted:
+    result['status']='GOAL_RESPONSE_TIMEOUT' if handle is None else 'REJECTED'
+    self.results.append(result);self.save()
+    print('RESULT',json.dumps({'name':self.leg,'status':result['status']}),flush=True);continue
    fut=handle.get_result_async();start=time.monotonic();last=start
    while not fut.done() and time.monotonic()-start<args.timeout:
     rclpy.spin_once(self,timeout_sec=.05)

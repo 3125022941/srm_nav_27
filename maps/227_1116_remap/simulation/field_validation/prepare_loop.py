@@ -9,11 +9,8 @@ from pathlib import Path
 def prepare(scene, output, rounds):
     if rounds < 1:
         raise ValueError("rounds must be positive")
-    manifest_file = scene / "scene_manifest.json"
-    original = manifest_file.read_bytes()
-    manifest = json.loads(original)
+    manifest = json.loads((scene / "scene_manifest.json").read_text(encoding="utf-8"))
     output.mkdir(parents=True, exist_ok=True)
-    (output / "scene_manifest_original.json").write_bytes(original)
     home = manifest["spawn_xy"]
     manifest["goals"] = [
         {"name": f"cycle_{cycle:02d}_{direction}", "xy": copy.copy(xy)}
@@ -26,7 +23,6 @@ def prepare(scene, output, rounds):
     )
     encoded = json.dumps(manifest, indent=2) + "\n"
     (output / "loop_manifest.json").write_text(encoded, encoding="utf-8")
-    manifest_file.write_text(encoded, encoding="utf-8")
 
 
 if __name__ == "__main__":

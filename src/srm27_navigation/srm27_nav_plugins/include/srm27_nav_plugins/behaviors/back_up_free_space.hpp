@@ -24,6 +24,7 @@
 #include "nav2_msgs/action/back_up.hpp"
 #include "nav2_msgs/srv/get_costmap.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "std_msgs/msg/empty.hpp"
 #include "visualization_msgs/msg/marker_array.hpp"
 
 #include "srm27_minco_core/recovery_decider.hpp"
@@ -178,6 +179,7 @@ protected:
   void visualizeEscape(geometry_msgs::msg::Pose2D pose, float clearance, float best_angle);
 
   rclcpp::Client<nav2_msgs::srv::GetCostmap>::SharedPtr costmap_client_;
+  rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::Empty>::SharedPtr spin_inhibit_pub_;
   std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<visualization_msgs::msg::MarkerArray>>
     marker_pub_;
   double twist_x_, twist_y_;

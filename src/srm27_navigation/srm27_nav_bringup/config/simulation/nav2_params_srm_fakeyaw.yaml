@@ -579,7 +579,7 @@ controller_server:
     # 用带 rot_stopped_velocity 的 StoppedGoalChecker 永远判不了到点，所以换回只看平移的
     # OmniStoppedGoalChecker（与实车链 config/real 一致）。
     general_goal_checker:
-      plugin: "srm27_nav_plugins::OmniStoppedGoalChecker"
+      plugin: "srm27_nav_plugins/OmniStoppedGoalChecker"
       stateful: True                                    # 是否保存目标检查状态
       # 平面位置容差（米）：与实车统一为 0.50，同时也是终点急停的进入半径。
       # 顺带修掉了原来的一处不自洽 —— 本文件原先 xy_goal_tolerance(0.15) 小于
@@ -990,7 +990,7 @@ behavior_server:
     spin:
       plugin: "nav2_behaviors/Spin"                       # 原地旋转恢复插件
     backup:
-      plugin: "srm27_nav_behaviors/BackUpFreeSpace"         # 自定义后退到自由空间插件
+      plugin: "srm27_nav_plugins/BackUpFreeSpace"          # 用本工作区插件，避开旧版同名导出
     drive_on_heading:
       plugin: "nav2_behaviors/DriveOnHeading"             # 沿指定航向直行插件
     wait:

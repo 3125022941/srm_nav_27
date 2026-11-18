@@ -14,7 +14,11 @@ def distances(points):
  candidates=tree.query_ball_point(points,nearest+r*math.sqrt(2))
  return np.array([np.linalg.norm(np.maximum(np.abs(centers[idx]-p)-r/2,0),axis=1).min() for p,idx in zip(points,candidates)])
 for res in results:
- rows=[p for p in records if p['leg']==res['name']];points=np.array([[float(p['x']),float(p['y'])] for p in rows]);dense=[]
+ rows=[p for p in records if p['leg']==res['name']]
+ if not rows or 'endpoint_error_m' not in res:
+  summary['legs'].append({'name':res['name'],'status':res['status'],'gt_samples':len(rows),'envelope_margin_m':None})
+  continue
+ points=np.array([[float(p['x']),float(p['y'])] for p in rows]);dense=[]
  for p,q in zip(points,points[1:]):
   n=max(1,math.ceil(np.linalg.norm(q-p)/.002));dense.extend(p+(q-p)*u for u in np.linspace(0,1,n+1))
  dense=np.array(dense) if dense else points
@@ -22,5 +26,10 @@ for res in results:
  # the minimum point to include every square that could improve that candidate.
  values=distances(dense);best=int(np.argmin(values));point=dense[best];d,_=tree.query(point);candidates=tree.query_ball_point(point,d+r*math.sqrt(2));exact=float(np.linalg.norm(np.maximum(np.abs(centers[candidates]-point)-r/2,0),axis=1).min())
  ds=[s for s in diagnostics if s['leg']==res['name']];entry={'name':res['name'],'status':res['status'],'endpoint_error_m':res['endpoint_error_m'],'max_gt_speed_mps':res['max_gt_speed_mps'],'wall_s':res['wall_s'],'actual_distance_m':res['actual_distance_m'],'center_clearance_m':exact,'envelope_margin_m':exact-args.radius,'minimum_xy':point.tolist(),'gt_samples':len(rows),'nav2_recoveries':res['recoveries'],'internal_recovery_max_enter_count':max([int(d.get('recovery_enter_count',0)) for d in ds],default=0)};summary['legs'].append(entry)
-summary['all_succeeded']=all(s['status']=='SUCCEEDED' for s in summary['legs']);summary['minimum_envelope_margin_m']=min(s['envelope_margin_m'] for s in summary['legs']);summary['maximum_observed_speed_mps']=max(s['max_gt_speed_mps'] for s in summary['legs']);summary['minimum_margin_goal_m']=.05;summary['margin_goal_met']=summary['minimum_envelope_margin_m']>=.05
+measured=[s for s in summary['legs'] if s['envelope_margin_m'] is not None]
+summary['all_succeeded']=bool(summary['legs']) and all(s['status']=='SUCCEEDED' for s in summary['legs'])
+summary['minimum_envelope_margin_m']=min((s['envelope_margin_m'] for s in measured),default=None)
+summary['maximum_observed_speed_mps']=max((s['max_gt_speed_mps'] for s in measured),default=None)
+summary['minimum_margin_goal_m']=.05
+summary['margin_goal_met']=bool(measured) and len(measured)==len(summary['legs']) and summary['minimum_envelope_margin_m']>=.05
 (RUN/'clearance_summary.json').write_text(json.dumps(summary,indent=2));print(json.dumps(summary,indent=2))

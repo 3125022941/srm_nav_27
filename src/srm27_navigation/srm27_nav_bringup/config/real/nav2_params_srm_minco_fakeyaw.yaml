@@ -589,7 +589,7 @@ controller_server:
     #        且 |Δyaw| <= yaw_goal_tolerance 且 hypot(vx, vy) <= trans_stopped_velocity。
     # 平动那一条保留：它保证"到点"时车真的停住了，而不是高速掠过目标点。
     general_goal_checker:
-      plugin: "srm27_nav_plugins::OmniStoppedGoalChecker"
+      plugin: "srm27_nav_plugins/OmniStoppedGoalChecker"
       stateful: True
       # 与实车 Omni 配置保持一致（main 已由 0.15 放宽到 0.4）：航点跳过半径 0.35 必须小于
       # 本容差，否则最后一个航点会在判定到达前被删掉、车掉头往回走（见 behavior_trees/
@@ -1171,7 +1171,7 @@ behavior_server:
     spin:
       plugin: "nav2_behaviors/Spin"
     backup:
-      plugin: "srm27_nav_behaviors/BackUpFreeSpace"
+      plugin: "srm27_nav_plugins/BackUpFreeSpace"
     drive_on_heading:
       plugin: "nav2_behaviors/DriveOnHeading"
     wait:

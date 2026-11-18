@@ -292,7 +292,7 @@ def generate_launch_description():
     # 带角速度判停的 StoppedGoalChecker 永远判不了到点 —— 一律用只看平移的
     # OmniStoppedGoalChecker（与实车链一致）。
     effective_goal_checker = PythonExpression([
-        "'srm27_nav_plugins::OmniStoppedGoalChecker'",
+        "'srm27_nav_plugins/OmniStoppedGoalChecker'",
     ])
 
     # 点云转换节点使用的参数：与旧入口一致，按命名空间 root_key 重写 use_sim_time。

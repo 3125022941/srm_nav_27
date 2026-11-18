@@ -180,6 +180,10 @@ void MincoMpcController::configure(
   // 现场可以直接只开这一条来确认"卡死时分诊是否成立、推的方向是否合理"。
   recovery_marker_pub_ = node->create_publisher<visualization_msgs::msg::MarkerArray>(
     plugin_name_ + "/recovery_markers", rclcpp::QoS(1));
+  if (command_frame_mode_ == CommandFrameMode::kOdomAlignedFake && yaw_mode_ == YawMode::kXyOnly) {
+    spin_inhibit_pub_ =
+      node->create_publisher<std_msgs::msg::Empty>("navigation_spin_inhibit", rclcpp::QoS(1));
+  }
 
   // 自转请求进线：发布端（rotation_controller）是 RELIABLE，订阅端必须同为
   // RELIABLE 才能匹配（尽力订阅匹配不上可靠发布）。回调只缓存数值与到达时刻
@@ -650,6 +654,9 @@ void MincoMpcController::activate()
   if (recovery_marker_pub_) {
     recovery_marker_pub_->on_activate();
   }
+  if (spin_inhibit_pub_) {
+    spin_inhibit_pub_->on_activate();
+  }
   // 预热 QP：把冷启动（约 8~15 ms）挪出 50 Hz 控制回调。
   std::string warm_reason;
   if (mpc_solver_.warmUp()) {
@@ -692,6 +699,9 @@ void MincoMpcController::deactivate()
   if (recovery_marker_pub_) {
     recovery_marker_pub_->on_deactivate();
   }
+  if (spin_inhibit_pub_) {
+    spin_inhibit_pub_->on_deactivate();
+  }
 }
 
 void MincoMpcController::cleanup()
@@ -702,6 +712,7 @@ void MincoMpcController::cleanup()
   prediction_pub_.reset();
   planning_input_pub_.reset();
   diagnostics_pub_.reset();
+  spin_inhibit_pub_.reset();
   {
     std::lock_guard<std::mutex> lock(path_mutex_);
     raw_path_ = nav_msgs::msg::Path();
@@ -1089,23 +1100,32 @@ geometry_msgs::msg::TwistStamped MincoMpcController::makeEscapeCommand(
   const State2D & _state, const Eigen::Vector2d & _escape_velocity,
   const rclcpp_lifecycle::LifecycleNode::SharedPtr & _node)
 {
-  // 逃逸速度是规划坐标系（odom）下的世界速度，必须转成车体系 —— Nav2 的
-  // TwistStamped 语义是车体系，直接塞世界速度会让车在非零航向下走错方向。
+  inhibitSpin();
+  // 逃逸和正常跟踪使用同一个命令坐标系。
   Eigen::Vector2d velocity_odom = _escape_velocity;
   diagnostics_.applied_speed_scale = 1.0;
+  const auto planar = rotatingFrameLimits(
+    limits_.max_linear_speed, limits_.max_linear_accel,
+    command_frame_mode_ == CommandFrameMode::kOdomAlignedFake ? _state.omega : 0.0);
   const double speed = velocity_odom.norm();
-  if (speed > limits_.max_linear_speed) {
-    diagnostics_.applied_speed_scale = limits_.max_linear_speed / speed;
+  if (speed > planar.speed) {
+    diagnostics_.applied_speed_scale = planar.speed / speed;
     velocity_odom *= diagnostics_.applied_speed_scale;
   }
-  const Eigen::Vector2d velocity_body = srm27_minco_core::odomToBodyVelocity(
-    _state.yaw, velocity_odom);
+  const auto & safety = validator_.config();
+  const double odom_age = std::max(0.0, _node->now().seconds() - _state.sample_stamp);
+  velocity_odom = limitExecutionVelocity(
+    *esdf_, _state.position(), velocity_odom, _state.velocity,
+    safety.robot_radius + safety.clearance_margin,
+    std::min(safety.braking_deceleration, planar.accel), safety.reaction_latency + odom_age);
+  const Eigen::Vector2d velocity_command =
+    velocityInCommandFrame(velocity_odom, _state.yaw, command_frame_mode_);
 
   geometry_msgs::msg::TwistStamped command;
   command.header.stamp = _node->now();
-  command.header.frame_id = base_frame_;
-  command.twist.linear.x = velocity_body.x();
-  command.twist.linear.y = velocity_body.y();
+  command.header.frame_id = command_frame_;
+  command.twist.linear.x = velocity_command.x();
+  command.twist.linear.y = velocity_command.y();
   command.twist.linear.z = 0.0;
   command.twist.angular.x = 0.0;
   command.twist.angular.y = 0.0;
@@ -1447,6 +1467,14 @@ void MincoMpcController::requestReplan(
   planning_request.path = planning_path_;
   planning_request.state = _state;
   planning_request.limits = limits_;
+  const auto planar = rotatingFrameLimits(
+    limits_.max_linear_speed, limits_.max_linear_accel,
+    command_frame_mode_ == CommandFrameMode::kOdomAlignedFake ? _state.omega : 0.0);
+  // The local trajectory must match the executable speed. Keep the measured
+  // entry speed feasible while the controller decelerates after a spin-up.
+  planning_request.limits.max_linear_speed = std::max(
+    planar.speed, std::min(limits_.max_linear_speed, _state.velocity.norm()));
+  planning_request.limits.max_linear_accel = planar.accel;
   planning_request.minco_config = minco_config_;
   planning_request.initializer_config = initializer_config_;
   // 本插件持有的路径是 Nav2 下发的全局路径，其末点即当前 FollowPath 任务的目标。
@@ -1456,6 +1484,8 @@ void MincoMpcController::requestReplan(
   planning_request.local_path_horizon = planning_horizon_;
   planning_request.validity_window = trajectory_max_age_;
   planning_request.validator_config = makeValidatorConfig();
+  planning_request.validator_config.braking_deceleration = std::min(
+    planning_request.validator_config.braking_deceleration, planar.accel);
   planning_request.terminal_reached_radius = terminal_reached_radius_;
   // 距离场以只读快照交给工作线程；工作线程不持有 costmap 锁。
   planning_request.esdf = std::const_pointer_cast<const srm27_minco_core::Esdf2D>(esdf_);
@@ -1575,10 +1605,18 @@ void MincoMpcController::harvestPlanningResult(const State2D & _state, double _n
     trajectory->totalDuration(), result.min_clearance, result.total_time_ms);
 }
 
+void MincoMpcController::inhibitSpin()
+{
+  if (spin_inhibit_pub_ && spin_inhibit_pub_->is_activated()) {
+    spin_inhibit_pub_->publish(std_msgs::msg::Empty());
+  }
+}
+
 geometry_msgs::msg::TwistStamped MincoMpcController::stopCommand(
   const rclcpp_lifecycle::LifecycleNode::SharedPtr & _node, const std::string & _reason,
   double _now_stamp)
 {
+  inhibitSpin();
   geometry_msgs::msg::TwistStamped command;
   command.header.stamp = _node->now();
   command.header.frame_id = command_frame_;
@@ -1734,6 +1772,18 @@ geometry_msgs::msg::TwistStamped MincoMpcController::computeVelocityCommands(
   diagnostics_.map_age = std::max(0.0, now_stamp - map_stamp_);
   if (diagnostics_.map_age > map_timeout_) {
     return fail("distance field is older than map_timeout");
+  }
+  if (spin_inhibit_pub_) {
+    const auto & safety = validator_.config();
+    const double spin_brake_time = base_limits_.max_angular_accel > 0.0 ?
+      base_limits_.max_angular_speed / base_limits_.max_angular_accel : 0.0;
+    if (shouldInhibitSpin(
+        *esdf_, measured_position, state.velocity,
+        spin_brake_time + safety.reaction_latency + diagnostics_.state_age,
+        std::max(yaw_narrow_clearance_threshold_, safety.robot_radius + safety.clearance_margin)))
+    {
+      inhibitSpin();
+    }
   }
 
   // 5) 取回后台结果（失败会触发脱困判定，所以需要当前状态）。
@@ -1955,11 +2005,14 @@ geometry_msgs::msg::TwistStamped MincoMpcController::computeVelocityCommands(
   }
 
   // 13) 输出前检查：合速度、自转与相对上一条命令的变化量。
-  //     ⚠ 模长限幅在 odom 系与车体系下等价（纯 yaw 旋转），所以用命令系的速度即可。
+  // 云台系快速旋转时，给坐标旋转和世界系转向分别留出串口加速度预算。
+  const auto planar = rotatingFrameLimits(
+    limits_.max_linear_speed, limits_.max_linear_accel,
+    command_frame_mode_ == CommandFrameMode::kOdomAlignedFake ? state.omega : 0.0);
   diagnostics_.applied_speed_scale = 1.0;
   const double speed = velocity_command.norm();
-  if (speed > limits_.max_linear_speed) {
-    const double scale = limits_.max_linear_speed / speed;
+  if (speed > planar.speed) {
+    const double scale = planar.speed / speed;
     diagnostics_.applied_speed_scale = scale;
     velocity_odom *= scale;
     velocity_command *= scale;
@@ -1976,25 +2029,23 @@ geometry_msgs::msg::TwistStamped MincoMpcController::computeVelocityCommands(
     const double interval = std::max(1.0e-3, now_stamp - last_control_stamp_);
     const Eigen::Vector2d previous_odom(previous_applied_input_(0), previous_applied_input_(1));
     const Eigen::Vector2d delta = velocity_odom - previous_odom;
-    const double max_delta = limits_.max_linear_accel * interval;
+    const double max_delta = planar.accel * interval;
     if (delta.norm() > max_delta) {
       velocity_odom = previous_odom + delta.normalized() * max_delta;
       velocity_command = velocityInCommandFrame(velocity_odom, yaw_at_actuation, command_frame_mode_);
     }
   }
-  // The nominal MINCO path is collision-checked, but the actually selected MPC
-  // velocity can approach an obstacle faster or cut inside that path. Bound its
-  // inward component by the available reaction-and-braking distance; preserve
-  // tangential/outward velocity and the original 2.6m/s ceiling.
+  // Check the actual command's braking path as well as the nominal MINCO path.
   const auto execution_clearance = esdf_->query(measured_position.x(), measured_position.y());
   if (!execution_clearance.valid) {
     return fail("execution clearance unavailable");
   }
   const auto & safety = validator_.config();
-  const Eigen::Vector2d guarded_velocity = clearanceLimitedVelocity(
-    velocity_odom, execution_clearance.gradient, execution_clearance.distance,
-    safety.robot_radius + safety.clearance_margin, safety.braking_deceleration,
-    safety.reaction_latency);
+  const Eigen::Vector2d guarded_velocity = limitExecutionVelocity(
+    *esdf_, measured_position, velocity_odom, state.velocity,
+    safety.robot_radius + safety.clearance_margin,
+    std::min(safety.braking_deceleration, planar.accel),
+    safety.reaction_latency + diagnostics_.state_age);
   const bool clearance_limited = (guarded_velocity - velocity_odom).norm() > 1.0e-6;
   if (clearance_limited) {
     velocity_odom = guarded_velocity;

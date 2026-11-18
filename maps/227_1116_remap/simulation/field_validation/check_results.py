@@ -7,11 +7,14 @@ from pathlib import Path
 
 def accepted(summary, expected_legs):
     legs = summary.get("legs", [])
+    margin = summary.get("minimum_envelope_margin_m")
     return (
         len(legs) == expected_legs
         and all(leg.get("status") == "SUCCEEDED" for leg in legs)
         and all(0 <= leg.get("endpoint_error_m", float("inf")) <= 0.5 for leg in legs)
-        and summary.get("minimum_envelope_margin_m", float("-inf")) >= 0.05
+        and all(leg.get("envelope_margin_m") is not None for leg in legs)
+        and margin is not None
+        and margin >= 0.05
     )
 
 

@@ -104,6 +104,9 @@ class SrmVelocitySystemPrivate
   /// \brief 上一次发布里程计的仿真时间。
   public: std::chrono::steady_clock::duration lastOdomSimTime{0};
 
+  /// \brief 上一次发布里程计的位置（世界坐标）。
+  public: ignition::math::Vector3d lastOdomPosition;
+
   /// \brief 是否已经发布过里程计。
   public: bool odomPublishInitialized{false};
 
@@ -633,17 +636,26 @@ void SrmVelocitySystemPrivate::UpdateOdometry(
 
   const auto period = std::chrono::duration<double>(
       1.0 / this->odomPublishFrequency);
-  if (this->odomPublishInitialized &&
-      (_info.simTime - this->lastOdomSimTime) <
+  const auto elapsed = _info.simTime - this->lastOdomSimTime;
+  if (this->odomPublishInitialized && elapsed >= std::chrono::steady_clock::duration::zero() &&
+      elapsed <
       std::chrono::duration_cast<std::chrono::steady_clock::duration>(period))
   {
     return;
   }
-  this->lastOdomSimTime = _info.simTime;
-  this->odomPublishInitialized = true;
-
   const auto chassisPose = poseComp->Data();
-  const auto linearVel = linearVelComp->Data();
+  auto linearVel = linearVelComp->Data();
+  if (this->odomPublishInitialized && elapsed > std::chrono::steady_clock::duration::zero())
+  {
+    // DART can retain a stale linear velocity even while the sampled pose is
+    // stationary. Compute it from the same pose/time pair in the odometry frame.
+    const auto worldVelocity = (chassisPose.Pos() - this->lastOdomPosition) /
+        std::chrono::duration<double>(elapsed).count();
+    linearVel = chassisPose.Rot().RotateVectorReverse(worldVelocity);
+  }
+  this->lastOdomSimTime = _info.simTime;
+  this->lastOdomPosition = chassisPose.Pos();
+  this->odomPublishInitialized = true;
   const auto angularVel = angularVelComp->Data();
 
   ignition::msgs::Odometry msg;

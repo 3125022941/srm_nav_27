@@ -102,6 +102,8 @@ void BackUpFreeSpace::onConfigure()
   }
 
   costmap_client_ = node->create_client<nav2_msgs::srv::GetCostmap>(service_name_);
+  spin_inhibit_pub_ = node->create_publisher<std_msgs::msg::Empty>("navigation_spin_inhibit", 1);
+  spin_inhibit_pub_->on_activate();
 
   if (visualize_) {
     marker_pub_ = node->template create_publisher<visualization_msgs::msg::MarkerArray>(
@@ -113,6 +115,7 @@ void BackUpFreeSpace::onConfigure()
 void BackUpFreeSpace::onCleanup()
 {
   costmap_client_.reset();
+  spin_inhibit_pub_.reset();
   marker_pub_.reset();
   early_exit_hold_count_ = 0;
 }
@@ -120,6 +123,7 @@ void BackUpFreeSpace::onCleanup()
 nav2_behaviors::Status BackUpFreeSpace::onRun(
   const std::shared_ptr<const BackUpAction::Goal> command)
 {
+  spin_inhibit_pub_->publish(std_msgs::msg::Empty());
   while (!costmap_client_->wait_for_service(std::chrono::seconds(1))) {
     if (!rclcpp::ok()) {
       RCLCPP_ERROR(logger_, "Interrupted while waiting for the service. Exiting.");
@@ -197,6 +201,7 @@ nav2_behaviors::Status BackUpFreeSpace::onRun(
 
 nav2_behaviors::Status BackUpFreeSpace::onCycleUpdate()
 {
+  spin_inhibit_pub_->publish(std_msgs::msg::Empty());
   rclcpp::Duration time_remaining = end_time_ - clock_->now();
   if (time_remaining.seconds() < 0.0 && command_time_allowance_.seconds() > 0.0) {
     stopRobot();

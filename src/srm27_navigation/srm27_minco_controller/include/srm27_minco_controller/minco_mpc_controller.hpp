@@ -29,6 +29,7 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <rclcpp_lifecycle/lifecycle_publisher.hpp>
+#include <std_msgs/msg/empty.hpp>
 #include <string>
 #include <vector>
 #include <visualization_msgs/msg/marker_array.hpp>
@@ -99,6 +100,7 @@ private:
 
   /// \brief 每个控制周期刷新地图快照与距离场。
   void refreshMap(double _stamp, const ControllerDiagnostics & _diagnostics);
+  void inhibitSpin();
 
   /// \brief 依据重规划策略提交一次后台规划请求。
   void requestReplan(
@@ -401,6 +403,7 @@ private:
   double spin_request_stamp_{-1.0};
   /// \brief 自转请求进线订阅（configure 时创建；kSpin 模式消费）。
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr spin_request_sub_{};
+  rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::Empty>::SharedPtr spin_inhibit_pub_{};
 
   /// \brief 脱困可视化（逃逸方向箭头 + 净空球）。
   rclcpp_lifecycle::LifecyclePublisher<visualization_msgs::msg::MarkerArray>::SharedPtr
