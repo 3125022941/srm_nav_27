@@ -22,4 +22,6 @@
 - [wz 控制迁移与 fakeyaw 实施记录](wz控制迁移与fakeyaw实施记录(ai).md): 交付清单、与方案的差异、P0/P1 实测数据与底盘执行力问题的 A/B 对照、与 main 合并的兼容性核对与修法，以及 P2~P4 的跑法。(AI 生成)
 - [调试日志——by maori](调试日志——by%20maori.md): 现场调试记录。
 
+- [TDT 场地算法验证](../maps/227_1116_remap/simulation/field_validation/README.md)：227_1116_remap 的分层判据、往返循环入口、A/B 配置生成与 2026-11-16 净空未通过记录。
+
 Build output, runtime logs, rosbag files, and generated diagnostic plots are kept outside this documentation tree.
