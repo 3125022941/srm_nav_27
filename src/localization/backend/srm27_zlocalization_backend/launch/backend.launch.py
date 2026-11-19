@@ -61,6 +61,10 @@ def generate_launch_description():
         'use_sim_time': 'false',
         'rviz': 'false',
         'mode': 'config',
+        # config 保留直接启动时显式 YAML / legacy mode 的语义；导航入口一律传 true/false。
+        'prior_enabled': 'config',
+        'loop_enabled': 'config',
+        'uwb_enabled': 'config',
         'prior_map': '',
         # 以下三项是迁入本工作区后新增的显式覆盖：同一份算法配置要同时服务仿真
         # （front_mid360）与实车（livox_imu），且轨迹/日志不允许落到进程 CWD 下。
@@ -77,6 +81,10 @@ def generate_launch_description():
             raise ValueError('mode must be config, mapping or localization')
         if args['mode'] != 'config':
             params.setdefault('prior_map', {})['enabled'] = args['mode'] == 'localization'
+        for argument, section in (('prior_enabled', 'prior_map'),
+                                  ('loop_enabled', 'loop'), ('uwb_enabled', 'uwb')):
+            if args[argument] != 'config':
+                params.setdefault(section, {})['enabled'] = launch_bool(args[argument])
         if args['prior_map']:
             params.setdefault('prior_map', {})['directory'] = require_absolute(
                 'prior_map', args['prior_map'])
@@ -94,7 +102,7 @@ def generate_launch_description():
             'trajectory.save_directory',
             params.get('trajectory', {}).get('save_directory', '')
         )
-        if prior and (not Path(prior_directory).is_dir()):
+        if prior and (not prior_directory or not Path(prior_directory).is_dir()):
             raise ValueError(
                 'Prior map does not exist; set prior_map:=/absolute/map or mode:=mapping'
             )

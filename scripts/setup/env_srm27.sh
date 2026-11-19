@@ -90,6 +90,34 @@ if [ -d "$_SRM27_SDK_DIR" ]; then
   esac
 fi
 
+# GTSAM 4.2.x：只有 srm27_zlocalization_backend 需要。安装脚本默认放
+# ~/.local/gtsam-4.2.0，但本机现有安装在工作区 .deps/gtsam-4.2.0（沙箱只能写工作区，
+# backend 的 build 缓存 GTSAM_DIR 也指着它）。这里按 显式变量 → 家目录 → 工作区
+# 依次探测：找到就导出 GTSAM_DIR / LD_LIBRARY_PATH，之后 colcon build / pytest
+# 不必再 source 第二个 env.sh。
+_srm27_gtsam_prefix=""
+for _cand in "${SRM27_GTSAM_PREFIX:-}" "$HOME/.local/gtsam-4.2.0" \
+             "$_SRM27_WS_DIR/.deps/gtsam-4.2.0" \
+             "$_SRM27_WS_DIR/.deps/gtsam-4.2.0/opt/ros/humble"; do
+  [ -n "$_cand" ] || continue
+  if [ -f "$_cand/lib/cmake/GTSAM/GTSAMConfig.cmake" ]; then
+    _srm27_gtsam_prefix="$_cand"
+    break
+  fi
+done
+if [ -n "$_srm27_gtsam_prefix" ]; then
+  export GTSAM_PREFIX="$_srm27_gtsam_prefix"
+  export GTSAM_DIR="$_srm27_gtsam_prefix/lib/cmake/GTSAM"
+  _srm27_gtsam_lib="$(find -L "$_srm27_gtsam_prefix/lib" -maxdepth 2 -name 'libgtsam.so' \
+    -printf '%h\n' 2>/dev/null | head -1)"
+  if [ -n "$_srm27_gtsam_lib" ]; then
+    case ":$LD_LIBRARY_PATH:" in
+      *":$_srm27_gtsam_lib:"*) ;;
+      *) export LD_LIBRARY_PATH="$_srm27_gtsam_lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ;;
+    esac
+  fi
+fi
+
 # 实车验收常用路径（各阶段命令直接引用）。
 export SRM27_LOG_DIR="${SRM27_LOG_DIR:-$HOME/srm_nav_27_data/logs}"
 mkdir -p "$SRM27_LOG_DIR" 2>/dev/null || true
@@ -131,6 +159,13 @@ else
   echo "[env_srm27] livox SDK : ⚠ 源码树里没找到 liblivox_lidar_sdk_shared.so"
   _srm27_bad=1
 fi
+if [ -n "$_srm27_gtsam_prefix" ]; then
+  _srm27_gtsam_version=$(sed -n 's/^set(PACKAGE_VERSION "\(.*\)")/\1/p' \
+    "$GTSAM_DIR/GTSAMConfigVersion.cmake" 2>/dev/null | head -1)
+  echo "[env_srm27] GTSAM    : $_srm27_gtsam_prefix (${_srm27_gtsam_version:-版本未知})"
+else
+  echo "[env_srm27] GTSAM    : 未找到（只影响 srm27_zlocalization_backend；见 scripts/setup/install_gtsam_4_2.sh）"
+fi
 if [ "$_srm27_bad" = "0" ]; then
   echo "[env_srm27] 就绪 ✅（PARAMS/MAP/ZLIO/LIDAR_CFG/SRM27_LOG_DIR 已导出）"
 else
@@ -138,4 +173,5 @@ else
 fi
 
 unset _var _pkg _prefix _srm27_bad _srm27_hits _srm27_ws_pattern _srm27_mvs_pattern \
-      _srm27_mvs_hits _n _value _srm27_managed_vars _pkg_ws _srm27_strip_path_var
+      _srm27_mvs_hits _n _value _srm27_managed_vars _pkg_ws _srm27_strip_path_var \
+      _cand _srm27_gtsam_prefix _srm27_gtsam_lib _srm27_gtsam_version

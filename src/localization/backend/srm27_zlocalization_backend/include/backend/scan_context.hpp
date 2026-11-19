@@ -20,7 +20,10 @@ struct ScanContextDescriptorConfig {
     int num_sectors = 90;
     double max_radius = 80.0;
     double downsample = 0.6;
-    double lidar_height = 0.35;
+    // 与 config/backend.yaml 的 scan_context.lidar_height、建包工具的 --sensor-z 默认
+    // 保持同一个值（URDF 0.346388 → 0.3464）。三者不一致时，重建/新建出来的描述子
+    // 会被 storage.cpp 的几何校验拒绝。
+    double lidar_height = 0.3464;
     int min_bin_points = 1;
     int augment_count = 3;
     double lateral_shift = 2.0;

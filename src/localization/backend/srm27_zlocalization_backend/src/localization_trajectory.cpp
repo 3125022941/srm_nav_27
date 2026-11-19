@@ -25,10 +25,10 @@ void Localization::addDescriptorLocked(const Keyframe& keyframe) {
     if (!config_.loop.enabled)
         return;
     if (keyframe.index < 0 || !keyframe.cloud ||
-        descriptor_.size() != static_cast<std::size_t>(keyframe.index))
+        trajectory_descriptor_.size() != static_cast<std::size_t>(keyframe.index))
         throw std::logic_error("runtime descriptor index does not match the trajectory");
-    addKeyframeDescriptor(descriptor_, keyframe);
-    if (descriptor_.size() != static_cast<std::size_t>(keyframe.index) + 1U)
+    addKeyframeDescriptor(trajectory_descriptor_, keyframe);
+    if (trajectory_descriptor_.size() != static_cast<std::size_t>(keyframe.index) + 1U)
         throw std::logic_error("runtime descriptor did not append one keyframe");
 }
 
@@ -39,7 +39,7 @@ void Localization::updateDescriptorPositionsLocked(
         return;
     }
     for (const auto& [index, pose] : poses) {
-        descriptor_.updateKeyframePosition(index, pose.block<3, 1>(0, 3));
+        trajectory_descriptor_.updateKeyframePosition(index, pose.block<3, 1>(0, 3));
     }
 }
 
@@ -176,8 +176,8 @@ void Localization::addTrajectoryKeyframeLocked(const FrontendFrame& frame) {
     updateGraphLocked(/*global_factor_added=*/false);
     trajectory_.get(keyframe.index, &keyframe);
     addDescriptorLocked(keyframe);
-    if (config_.prior_map_enabled) {
-        // 先验图不可变且拥有 scan-to-map 目标；有界图窗口外只需保留最新运行锚。
+    if (config_.prior_map_enabled && !config_.loop.enabled) {
+        // 未启用运行回环时，先验跟踪只需保留最新运行锚。
         trajectory_.retainLatest(1);
     }
 }
@@ -225,7 +225,7 @@ void Localization::anchorRecoveredFrameLocked(const FrontendFrame& frame,
     if (add_uwb_factor && uwb_.addToRecovery(keyframe)) {
         updateGraphLocked(/*global_factor_added=*/true);
     }
-    if (config_.prior_map_enabled) {
+    if (config_.prior_map_enabled && !config_.loop.enabled) {
         trajectory_.retainLatest(1);
     }
 }

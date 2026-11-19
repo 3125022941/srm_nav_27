@@ -79,6 +79,10 @@ void LocalizationNode::initializeRuntime() {
     descriptor_ = makePlaceDescriptor(parameters_.descriptor);
     EffectiveConfig effective_config = resolveConfig(parameters_.runtime, descriptor_->enabled());
     parameters_.runtime = effective_config.values;
+    // 共存时运行回环库从空轨迹开始，不能向已加载的先验库追加或重新编号。
+    if (parameters_.runtime.prior_map_enabled && parameters_.runtime.loop.enabled) {
+        trajectory_descriptor_ = descriptor_->createEmpty();
+    }
 
     if (!uwbFrameContractValid(parameters_.runtime.uwb, parameters_.input.uwb_frame,
                                parameters_.input.map_frame)) {
@@ -88,7 +92,11 @@ void LocalizationNode::initializeRuntime() {
             "in its real UWB-local frame_id (for example 'uwb'), or disable "
             "the transform");
     }
-    if (parameters_.runtime.prior_map_enabled &&
+    if (parameters_.runtime.loop.enabled) {
+        RCLCPP_WARN(get_logger(),
+                    "loop closure retains the full runtime pose graph and keyframe history; "
+                    "memory grows with the trajectory (also when prior-map tracking is enabled)");
+    } else if (parameters_.runtime.prior_map_enabled &&
         parameters_.runtime.graph.fixed_lag_seconds <= 0.0) {
         RCLCPP_WARN(get_logger(),
                     "prior-map localization is using an unbounded pose graph; set "
@@ -98,7 +106,9 @@ void LocalizationNode::initializeRuntime() {
         throw std::runtime_error("failed to load immutable prior map");
     }
 
-    controller_ = std::make_unique<Localization>(trajectory_, prior_map_, *descriptor_,
+    PlaceDescriptor& runtime_descriptor =
+        trajectory_descriptor_ ? *trajectory_descriptor_ : *descriptor_;
+    controller_ = std::make_unique<Localization>(trajectory_, prior_map_, *descriptor_, runtime_descriptor,
                                                  std::move(effective_config), steady_clock_,
                                                  frontend_, publisher_, publisher_);
     frontend_.configure(parameters_.input.frontend == "zlio", parameters_.services.frontend_reset);

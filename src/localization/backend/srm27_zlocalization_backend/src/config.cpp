@@ -68,14 +68,10 @@ void resolveStartupHint(EffectiveConfig& effective) {
     }
 }
 
-/// 根据先验地图和描述子可用性解析回环能力。
+/// 根据运行轨迹描述子的可用性解析回环能力，先验不排斥回环。
 void resolveLoopCapability(EffectiveConfig& effective, const bool descriptor_available) {
     Config& config = effective.values;
-    if (config.loop.enabled && config.prior_map_enabled) {
-        config.loop.enabled = false;
-        recordOverride(&effective, "loop.enabled", "true", "false",
-                       "the immutable prior map owns global lidar correction");
-    } else if (config.loop.enabled && !descriptor_available) {
+    if (config.loop.enabled && !descriptor_available) {
         config.loop.enabled = false;
         recordOverride(&effective, "loop.enabled", "true", "false",
                        "loop closure requires an enabled place descriptor");
@@ -127,7 +123,7 @@ void resolveUwbCalibration(EffectiveConfig& effective) {
 /// 为启用回环的运行模式保留完整历史图变量。
 void resolveGraphHistory(EffectiveConfig& effective) {
     Config& config = effective.values;
-    if (!config.prior_map_enabled && config.loop.enabled && config.graph.fixed_lag_seconds > 0.0) {
+    if (config.loop.enabled && config.graph.fixed_lag_seconds > 0.0) {
         const double requested_lag = config.graph.fixed_lag_seconds;
         config.graph.fixed_lag_seconds = 0.0;
         recordOverride(&effective, "graph.fixed_lag_seconds", std::to_string(requested_lag), "0",

@@ -44,6 +44,7 @@ from localization_interfaces.msg import (  # noqa: E402
 )
 from localization_interfaces.srv import ResetFrontend  # noqa: E402
 from nav_msgs.msg import Odometry  # noqa: E402
+from rclpy.serialization import serialize_message  # noqa: E402
 from sensor_msgs.msg import PointCloud2  # noqa: E402
 
 from zlocalization_backend_adapter import (  # noqa: E402
@@ -371,6 +372,51 @@ def _reply(outcome=ResetFrontend.Response.COMPLETED, has_boundary=True, source_e
     return reply
 
 
+def _call_reset(node, request, response):
+    returned = node.services["zlocalization/reset_frontend"](request, response)
+    _assert(isinstance(returned, ResetFrontend.Response),
+            "rclpy 服务回调必须返回 Response，否则发送响应时 TypeError 并退出")
+    _assert(returned is response, "必须返回已填充的响应")
+    serialize_message(returned)
+    return returned
+
+
+def test_reset_early_exits_return_response():
+    """不可用、超时和传输错误也必须返回可发送的响应，保留事务身份。"""
+    class PendingFuture:
+        def add_done_callback(self, callback):
+            pass
+
+    class FailedFuture:
+        def add_done_callback(self, callback):
+            callback(self)
+
+        def result(self):
+            raise RuntimeError("test transport failure")
+
+    for case, expected in (
+        ("unavailable", ResetFrontend.Response.REJECTED),
+        ("timeout", ResetFrontend.Response.IN_PROGRESS),
+        ("failure", ResetFrontend.Response.INDETERMINATE),
+    ):
+        node, adapter = _adapter()
+        if case == "unavailable":
+            adapter.reset_client.service_is_ready = lambda: False
+        elif case == "timeout":
+            adapter._reset_timeout = 0.0
+            adapter.reset_client.call_async = lambda request: PendingFuture()
+        else:
+            adapter.reset_client.call_async = lambda request: FailedFuture()
+        request = ResetFrontend.Request()
+        request.requester_instance_id = 99
+        request.transaction_id = 7
+        request.target_epoch = 4
+        response = _call_reset(node, request, ResetFrontend.Response())
+        _assert(response.outcome == expected, f"{case}: outcome 错误")
+        _assert((response.requester_instance_id, response.transaction_id,
+                 response.target_epoch) == (99, 7, 4), f"{case}: 事务身份丢失")
+
+
 def test_reset_boundary_becomes_identity():
     """前端边界（45° + 4 m 平移）必须被改写为恒等，否则 backend 二次补偿。"""
     reply = _reply()
@@ -381,7 +427,7 @@ def test_reset_boundary_becomes_identity():
     request.transaction_id = 7
     request.target_epoch = 4
     response = ResetFrontend.Response()
-    node.services["zlocalization/reset_frontend"](request, response)
+    _call_reset(node, request, response)
     _assert(response.outcome == ResetFrontend.Response.COMPLETED, "终态必须透传")
     _assert(response.has_boundary, "暖重置必须给出边界")
     _assert(response.source_epoch == 3, f"源代次应透传，实际 {response.source_epoch}")
@@ -403,7 +449,7 @@ def test_cold_reset_synthesises_identity_boundary_from_last_frame():
     request.transaction_id = 7
     request.target_epoch = 4
     response = ResetFrontend.Response()
-    node.services["zlocalization/reset_frontend"](request, response)
+    _call_reset(node, request, response)
     _assert(response.has_boundary, "适配后 odom 连续，冷启动也应给出恒等边界")
     _assert(response.source_epoch == 3, "源代次应取适配层最后一帧的代次")
     _assert(response.boundary_stamp.sec == 9, "边界时刻应取适配层最后一帧")
@@ -417,7 +463,7 @@ def test_reset_without_any_frame_does_not_claim_boundary():
     request.transaction_id = 7
     request.target_epoch = 4
     response = ResetFrontend.Response()
-    node.services["zlocalization/reset_frontend"](request, response)
+    _call_reset(node, request, response)
     _assert(not response.has_boundary, "没有帧身份时不应声明边界")
 
 
@@ -477,6 +523,7 @@ def main():
         test_frame_adaptation_keeps_raw_payload_and_warns_once,
         test_session_forwarded_unchanged,
         test_prediction_is_dropped_until_offset_is_available,
+        test_reset_early_exits_return_response,
         test_reset_boundary_becomes_identity,
         test_cold_reset_synthesises_identity_boundary_from_last_frame,
         test_reset_without_any_frame_does_not_claim_boundary,

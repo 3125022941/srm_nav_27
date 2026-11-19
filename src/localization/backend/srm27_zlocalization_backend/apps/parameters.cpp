@@ -262,15 +262,13 @@ void ParameterReader::validateRelationships() {
     }
     if (parameters_.runtime.prior_map_enabled && parameters_.maps.save_on_shutdown) {
         RCLCPP_WARN(node_.get_logger(),
-                    "immutable-prior localization does not accumulate a "
-                    "runtime map; "
+                    "prior-map mode does not export a runtime map bundle; "
                     "disabling trajectory.save_on_shutdown");
         parameters_.maps.save_on_shutdown = false;
     }
     if (parameters_.runtime.prior_map_enabled && parameters_.visualization.publish_runtime_map) {
         RCLCPP_WARN(node_.get_logger(),
-                    "immutable-prior localization does not accumulate a "
-                    "runtime map; "
+                    "prior-map mode displays the immutable prior map; "
                     "disabling visualization.publish_runtime_map");
         parameters_.visualization.publish_runtime_map = false;
     }

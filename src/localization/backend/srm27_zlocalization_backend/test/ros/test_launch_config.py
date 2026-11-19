@@ -87,3 +87,38 @@ def test_localization_visualization_selects_backend_and_rviz_actions(tmp_path):
     executables = [perform_substitutions(context, normalize_to_list_of_substitutions(
         action.node_executable)) for action in actions]
     assert executables == ['srm27_zlocalization_backend_node', 'rviz2']
+
+
+@pytest.mark.parametrize('mask', range(8))
+def test_independent_switches_override_yaml_without_map_implying_prior(tmp_path, mask):
+    """入口的三项显式开关覆盖 YAML 真值，地图路径本身不启用先验。"""
+    from launch_ros.utilities import evaluate_parameters
+
+    config = tmp_path / 'configuration.yaml'
+    config.write_text('prior_map: {enabled: true}\nloop: {enabled: true}\n'
+                      'uwb: {enabled: true}\n', encoding='utf-8')
+    context, actions = launch_actions(
+        config, prior_map=str(tmp_path),
+        prior_enabled=str(bool(mask & 1)), loop_enabled=str(bool(mask & 2)),
+        uwb_enabled=str(bool(mask & 4)))
+    params = evaluate_parameters(context, actions[0]._Node__parameters)[0]
+    for section, bit in (('prior_map', 1), ('loop', 2), ('uwb', 4)):
+        assert params[f'{section}.enabled'] is bool(mask & bit)
+
+
+def test_shipping_profiles_default_all_features_off():
+    root = Path(__file__).resolve().parents[2] / 'config'
+    for name in ('backend.yaml', 'srm27_localization_real.yaml', 'srm27_localization_sim.yaml'):
+        params = backend_launch.load_params(root / name)
+        assert all(params[section]['enabled'] is False for section in ('prior_map', 'loop', 'uwb'))
+
+
+def test_disabled_prior_needs_no_map_and_enabled_prior_requires_one(tmp_path):
+    config = tmp_path / 'configuration.yaml'
+    config.write_text('{}\n', encoding='utf-8')
+    launch_actions(config, prior_enabled='false', loop_enabled='true', uwb_enabled='true')
+    with pytest.raises(ValueError):
+        launch_actions(config, prior_enabled='true')
+    for flag in ('prior_enabled', 'loop_enabled', 'uwb_enabled'):
+        with pytest.raises(ValueError):
+            launch_actions(config, **{flag: 'maybe'})

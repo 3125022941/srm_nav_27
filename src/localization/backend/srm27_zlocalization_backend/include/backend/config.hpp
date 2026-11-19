@@ -231,7 +231,7 @@ struct UwbConfig {
 
 /// 回环检索、源点云累积、目标子图和验证参数。
 struct LoopConfig {
-    bool enabled = true;
+    bool enabled = false;
     int cooldown_keyframes = 5;
     double candidate_max_distance = 0.0;
     double descriptor_ratio_threshold = 1.0;

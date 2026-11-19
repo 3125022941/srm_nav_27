@@ -46,21 +46,24 @@ private:
 }  // namespace
 
 /// 绑定地图、图估计和外部端口，并解析当前有效能力。
-Localization::Localization(KeyframeMap& trajectory, KeyframeMap& prior, PlaceDescriptor& descriptor,
+Localization::Localization(KeyframeMap& trajectory, KeyframeMap& prior,
+                           PlaceDescriptor& prior_descriptor, PlaceDescriptor& trajectory_descriptor,
                            Config requested, SteadyClockPort& clock, FrontendResetPort& reset,
                            StateSink& state, VisualizationSink& visualization)
-    : Localization(trajectory, prior, descriptor,
-                   resolveConfig(std::move(requested), descriptor.enabled()), clock, reset, state,
-                   visualization) {
+    : Localization(trajectory, prior, prior_descriptor, trajectory_descriptor,
+                   resolveConfig(std::move(requested), trajectory_descriptor.enabled()), clock,
+                   reset, state, visualization) {
 }
 /// 按已解析的有效配置初始化图估计，并绑定地图和外部端口。
 Localization::Localization(KeyframeMap& trajectory, KeyframeMap& prior_map,
-                           PlaceDescriptor& descriptor, EffectiveConfig effective_config,
-                           SteadyClockPort& clock, FrontendResetPort& reset_port,
+                           PlaceDescriptor& prior_descriptor, PlaceDescriptor& trajectory_descriptor,
+                           EffectiveConfig effective_config, SteadyClockPort& clock,
+                           FrontendResetPort& reset_port,
                            StateSink& state_sink, VisualizationSink& visualization_sink)
     : trajectory_(trajectory),
       prior_map_(prior_map),
-      descriptor_(descriptor),
+      prior_descriptor_(prior_descriptor),
+      trajectory_descriptor_(trajectory_descriptor),
       config_(std::move(effective_config.values)),
       clock_(clock),
       reset_port_(reset_port),
@@ -77,15 +80,19 @@ Localization::Localization(KeyframeMap& trajectory, KeyframeMap& prior_map,
                  config_.registration_debug_enabled},
                 prior_map_, target_cache_),
       recovery_({config_.recovery, config_.relocalization, config_.registration_debug_enabled},
-                prior_map_, descriptor_, target_cache_),
+                prior_map_, prior_descriptor_, target_cache_),
       loop_cycle_({config_.loop, config_.relocalization.point_to_plane_config}) {
+    if (config_.prior_map_enabled && config_.loop.enabled &&
+        &prior_descriptor_ == &trajectory_descriptor_) {
+        throw std::invalid_argument("prior and loop closure require independent descriptor stores");
+    }
     for (const ConfigOverride& override : effective_config.overrides) {
         BACKEND_WARN_STREAM("configuration override: " << override.field
                                                        << " requested=" << override.requested
                                                        << " -> effective=" << override.effective
                                                        << " (" << override.reason << ")");
     }
-    if (config_.prior_map_enabled && !descriptor_.enabled() && !config_.uwb.enabled &&
+    if (config_.prior_map_enabled && !prior_descriptor_.enabled() && !config_.uwb.enabled &&
         !config_.startup_hint.T_map_sensor.has_value()) {
         BACKEND_WARN_STREAM(
             "prior map has no startup hint, UWB, or descriptor; the backend "
@@ -98,7 +105,7 @@ Localization::Localization(KeyframeMap& trajectory, KeyframeMap& prior_map,
             << (config_.uwb.use_z ? "SE(2)+Z" : "SE(2) (Z fixed)")
             << " bootstrap; its raw inliers then initialize one joint graph "
                "alignment state without a derived prior");
-        if (!descriptor_.enabled() && !config_.startup_hint.T_map_sensor.has_value()) {
+        if (!prior_descriptor_.enabled() && !config_.startup_hint.T_map_sensor.has_value()) {
             BACKEND_WARN_STREAM(
                 "online UWB zero-pose estimation has no startup hint or "
                 "descriptor fallback; configured T_map_uwb must place the "
@@ -139,7 +146,7 @@ void Localization::isolateEstimatorFailureLocked(const std::string& reason) {
     graph_.reset(config_.graph);
     trajectory_.clear();
     if (config_.loop.enabled)
-        descriptor_.clear();
+        trajectory_descriptor_.clear();
     frames_.invalidate();
     uwb_.resetGraph();
     target_cache_.clear();

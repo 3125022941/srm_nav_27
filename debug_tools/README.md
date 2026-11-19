@@ -8,10 +8,11 @@
 | --- | --- | --- |
 | `plot_vxvywz.py` | 底盘 vx/vy/wz 波形 + 云台偏角/关节角行（共 8 条曲线） | 可用（对接 `/chassis_speed`、`/chassis_to_gimbal_yaw_deg`、`/gimbal_joint_angle`） |
 | `plot_lio_gt_yaw.py` | **LIO 算的车头朝向 vs Gazebo 真值**：yaw 曲线 + 误差 + x-y 轨迹 + 速度符号（共 5 个面板）；加 `--zlio` 再多 3 个面板看里程计前端换成 ZLIO 之后的效果 | 可用 |
+| `plot_backend_correction.py` | **backend 的 map→odom 纠正监视**：先验配准 / 回环各自改了多少、改到哪；4 个面板 + CSV | 可用（对接 `/tf`、`/localization/odometry`、`~/localization_state`、`/rosout`） |
 | `system_monitor.py` | 本机占用：CPU/内存/swap/温度/磁盘/网络 + **导航栈分组统计** + 最吃 CPU 的进程 | 可用 |
 
-`plot_vxvywz.py` 与 `system_monitor.py` 共用 `_common.py`（matplotlib 配置目录、
-中文字体、CSV 落盘、`-h` 输出），改公共行为只改那一处；
+`plot_vxvywz.py`、`plot_backend_correction.py` 与 `system_monitor.py` 共用 `_common.py`
+（matplotlib 配置目录、中文字体、CSV 落盘、`-h` 输出），改公共行为只改那一处；
 `plot_lio_gt_yaw.py` 是后加的，自带一份同样的样板，没依赖 `_common.py`。
 
 ---
@@ -413,7 +414,172 @@ T_off 一致性  : yaw  +63.00° ± 0.035°, |t| 60.0 ± 0.7 mm
 
 ---
 
-## 4. 2026-11-04 的配套改动
+## 4. `plot_backend_correction.py` —— backend 的 map→odom 纠正监视
+
+![backend map→odom 纠正监视示例](example_backend_correction.png)
+
+回答一个问题：**backend 到底有没有在修正 `map → odom`？先验配准和回环各改了多少？**
+
+先验配准、运行回环与 UWB 通过 `--zloc-prior`、`--zloc-loop`、`--zloc-uwb`
+独立选择，默认关闭，可同时启用。工具按实际提交日志归因：
+
+| 来源 | 触发 | backend 日志 |
+| --- | --- | --- |
+| 先验配准 | 启用先验，地图匹配通过门控 | `global correction committed: ... sources=prior_scan_to_map ...` |
+| 运行回环 | 启用回环，重访且描述子/几何/PCM/创新检验通过 | `loop scan-to-map accepted: ...` |
+| UWB | 新鲜观测且时空标定有效，通过门控 | `global correction committed: ... sources=uwb ...` |
+| 先验+UWB 联合 | 同周期两项通过联合检验 | `global correction committed: ... sources=prior_scan_to_map+uwb ...` |
+
+联合修正单独标记，不把总修正量重复算作先验、UWB 各自的贡献。
+只有收到明确 `loop=disabled` / `effective=false` 配置日志，才显示 `loop=off(config)`；
+工具晚启动而错过能力日志时，不根据“有先验但无回环事件”推断回环关闭。
+
+工具把这四类输出拼在一起（**只读，不发控制/服务，不要求打开 backend 的 visualization**）：
+
+| 话题 | 用途 |
+| --- | --- |
+| `/tf` | `map → odom` 的唯一权威值，画①②④ |
+| `/localization/odometry` | map 系机器人位姿；把修正箭头画在“机器人当时的位置”而不是原点 |
+| `<ns>/backend_node/localization_state` | 状态、epoch、reason；画状态带和统计 |
+| `/rosout` | 解析上面两类 INFO 日志，区分“这次修正属于谁”，并拿日志报告量 |
+
+### 4.1 为什么必须看 `/rosout`
+
+`map → odom` 是一条连续曲线，先验和回环都会改它，**TF 本身不带“谁改的”**。
+工具同时给出两列数字：
+
+- **日志报告值**：backend 自己算的 `delta_t` / `delta_r_deg`，是提交那一刻的输出位姿变化；
+- **TF 实测值**：在事件附近找 `map → odom` 的前后台阶，换算到机器人位置。
+
+两列接近 → 事件匹配正确、修正真的落到 TF 上。两列差很多 → 事件窗口里混进了别的修正，
+或图优化在两次 TF 之间连续改了几次；先看①②的趋势，不要只盯单次数字。
+
+> 日志可见性：backend 的领域日志（`global correction committed` / `loop scan-to-map accepted`）
+> 原先用独立 logger `backend`，只走 launch 的 stdout，**不会进 `/rosout`**；本次已在
+> `apps/main.cpp` 把领域 logger 换成节点 logger，重建 backend 后这些行才会出现在
+> `/rosout`。如果你用旧二进制，③ 会一直是空的——先 `colcon build --packages-select
+> srm27_zlocalization_backend`，或分别看 launch 的 stdout。
+
+先验和回环可能落在同一帧附近（尤其回环闭合的那次 transaction），所以工具做的是
+**全局唯一分配**：每个 TF 台阶最多被一条事件认领；同时按“时间近 + 量级匹配”选，
+大台阶优先给回环、小台阶优先给先验。认领不到的记 `TF实测 未捕获`，不会硬凑。
+
+### 4.2 四个面板
+
+| 面板 | 内容 | 怎么读 |
+| --- | --- | --- |
+| ① `map→odom` 平移 | x/y/z（m）随时间 | 回环闭合处应有台阶；先验是密集的小台阶。长期单向漂移而此处不动 = 先验没进图 |
+| ② `map→odom` 姿态 | yaw（粗）、roll/pitch（细），单位° | yaw 台阶对应回环；roll/pitch 应接近 0。若 yaw 台阶没有③的柱对应，查 reset/UWB/恢复 |
+| ③ 单次修正量 | 柱=日志报告值；蓝=先验，橙=回环；实心=平移，×=旋转 | 先验柱约 2 Hz、mm~cm 正常；回环柱 dm~m 是闭合。全是 0 而状态 NORMAL → 先验观测被接受但图没变，查 `prior scan-to-map factor accepted` 日志 |
+| ④ map 系轨迹 + 箭头 | 机器人轨迹 + 每次修正的前→后箭头 | 箭头方向来回摆、幅度相近 = 先验在追不稳定观测（地图/外参/时间戳）；箭头与①的台阶方向应一致 |
+
+竖直虚线 = 回环时刻；浅色背景带 = 非 NORMAL 状态（黄 `OBS_DEGRADED`，红 `SUSPECT/LOST`）。
+
+④ 有 `--xy-min-span`（默认 2 m）的最小视野：停车时 `/localization/odometry` 的 mm 级
+抖动只会缩成一个点，不会被自动缩放放大成“毛线球”；这时看①的 mm 级台阶和③的先验柱，
+不要因为④看着没动就以为定位没工作。
+
+### 4.3 用法
+
+```bash
+# 先看工具本身（合成数据，不需要 ROS）
+./debug_tools/plot_backend_correction.py --demo
+./debug_tools/plot_backend_correction.py --demo --headless --duration 25 --save
+
+# backend 已在跑：另开终端
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+./debug_tools/plot_backend_correction.py                     # 一直录，Ctrl-C 出整段图
+./debug_tools/plot_backend_correction.py --duration 120      # 固定 2 分钟
+./debug_tools/plot_backend_correction.py --ros-args -r __ns:=/red_standard_robot1
+./debug_tools/plot_backend_correction.py --duration 60 --stats-only   # 只看数字
+./debug_tools/plot_backend_correction.py --headless --save /tmp/bc.png # ssh/无显示器
+
+# backend 日志被压掉时，至少还能看 TF 曲线（③ 会空着）
+./debug_tools/plot_backend_correction.py --rosout-topic ""
+```
+
+实车/仿真建议流程：先启动 backend，等 `localization_state` 到 `NORMAL`，再开本工具；
+然后按验收动作走（直行、转向、回到旧地点）。验证回环须显式添加 `--zloc-loop`；
+可保留 `--zloc-prior` 和 `--zloc-uwb`，并检查启动日志三项能力是否符合预期。
+**工具启动时 backend 可能已经跑了一会儿**，所以“首末变化”是录制窗口内的变化，
+不是从 backend 启动那一刻算起。
+
+### 4.4 参数
+
+| 参数 | 默认 | 说明 |
+| --- | --- | --- |
+| `--duration` | `0` | 录制时长（秒）；0 = 一直录到 Ctrl-C |
+| `--plot-hz` | `5` | 实时窗口刷新频率 |
+| `--window` | `120` | **实时窗口**只显示最近多少秒；最终 PNG 始终是全程 |
+| `--tf-topic` | `/tf` | TF 话题 |
+| `--odom-topic` | `/localization/odometry` | backend 的 map 系里程计 |
+| `--odom-hz` | `20` | 里程计降采样频率；0 = 全存 |
+| `--state-topic` | `backend_node/localization_state` | 相对名会按 `--namespace` / `__ns` 展开；空串关闭 |
+| `--rosout-topic` | `/rosout` | 修正日志来源；空串则只看 TF |
+| `--node-match` | `backend` | 只接受名字含该子串的 `/rosout` 日志；backend 的日志器名是 `backend`（不是 `backend_node`），默认值同时匹配两者 |
+| `--namespace` | 空 | 命名空间；也可用 `--ros-args -r __ns:=...` |
+| `--map-frame` / `--odom-frame` | `map` / `odom` | TF 名不是这两个时改 |
+| `--match-before` / `--match-after` | `0.25` / `0.35` | 事件匹配 TF 台阶的前/后窗口（秒） |
+| `--arrow-min` | `0.01` | ④ 里先验箭头的最小长度（米）；回环始终画 |
+| `--xy-min-span` | `2.0` | ④ 的最小视野边长（米）；停车抖动不会被放大成毛线球 |
+| `--unassigned-translation` / `--unassigned-yaw` | `0.02` / `0.5` | 统计“未归属跳变”的阈值 |
+| `--print-delta` | `0.02` | 终端实时打印先验事件的最小平移（米）；回环始终打印 |
+| `--verbose` | 关 | 实时打印每一条先验事件 |
+| `--demo` / `--headless` / `--stats-only` / `--save` / `--csv` | — | 同其他工具 |
+| `--no-caption` | 关 | 不把解释画进图里，解释改打到终端 |
+
+输出（**默认全部落在本项目的 `user_log/`**）：
+
+- PNG：`<工程根>/user_log/backend_correction_<时间戳>.png`（`--save` 可覆盖）
+- `<同名>_samples.csv`：`map→odom` / 里程计 / 状态逐行
+- `<同名>_events.csv`：每次事件一行，含日志报告值与 TF 实测值（`tf_dxy_m` / `tf_dyaw_deg`）
+- 终端：每 5 s 一行摘要；结束按来源分组统计，并报告“未归属跳变”
+
+路径规则：
+
+- 不写 `--save`：`user_log/backend_correction_<时间戳>.png`；
+- 只给文件名（`--save pic.png`）：落到 `user_log/pic.png`；
+- 给绝对路径/带目录的相对路径：尊重用户；**目录不可写时自动回退到 `user_log/` 并打警告**，
+  不再抛 `PermissionError`。例如误写成 `--save /user_log/pic.png`（根目录）会回退到
+  `<工程根>/user_log/pic.png`，CSV 也跟着落到那里。
+
+### 4.5 判读与常见故障
+
+- **③ 一直是空的，但 ① 有台阶**：`/rosout` 没收到 backend 日志。查
+  `ros2 topic echo /rosout | grep -E 'global correction|loop scan'`；再查
+  `--log-level` 是否把 INFO 压掉、`--node-match` 是否匹配节点名。
+- **③ 里先验很密但 ① 几乎不动**：修正量确实只有 mm 级，或先验只更新了协方差/描述子位置
+  而没有改全局位姿。看 backend 日志 `prior scan-to-map factor accepted` 是否持续出现；
+  停着不动时 mm 级是正常的。
+- **④ 箭头方向来回摆**：先验观测不稳定。优先查先验地图与当前场地是否一致（错误地图会
+  被创新检验拒绝或进入 OBS_DEGRADED）、雷达外参与 `common.sensor_frame`、时间戳/同步。
+- **回环始终为 0**：检查启动日志中的 `loop=enabled/disabled` 与 `--zloc-loop`。
+  若已开启，检查轨迹是否真正重访、`exclude_recent`、`candidate_max_distance`、
+  描述子/几何/PCM/创新检验；先验开启本身不会关闭回环。
+- **“未归属跳变” > 0**：TF 上出现了没有日志对应的大台阶。常见于 reset（`map→odom`
+  会按坐标边界换一次）、LOST 冻结后恢复、或 `/rosout` 漏收。结合 `localization_state`
+  的 epoch 和 reason 一起看。
+- **UWB**：默认关闭，`--zloc-uwb` 显式开启。单独与联合提交分别计数，0 次单独事件
+  不代表 UWB 没有参与联合融合；还需检查实际话题、时空标定与门控日志。
+- **3D vs 2D**：backend 的 `map→odom` 是 4×4，工具原样画 roll/pitch；Nav2 侧会投影，
+  所以①②里看到小角度 roll/pitch 不代表导航链有问题，但持续增大要查外参。
+
+### 4.6 限制
+
+- 依赖 backend 的 INFO 日志文案。只认三种固定提交日志（`loop scan-to-map accepted:`、
+  `global correction committed:`、带 `delta_t` 的 `localization state ->`），**不做模糊匹配**：
+  `prior scan-to-map factor conflicted` / `physical correction cap` 虽然也带 `delta_t`，
+  但那是被拒绝的观测，图没有变化。文案改了，解析会退化成“没有事件”，先跑
+  `--stats-only` 看 ③ 是否有数。
+- 事件时间用**消息到达墙钟**对齐，仿真时间/实时都能用；如果系统负载很高导致
+  `/rosout` 比 TF 晚 >0.35 s，可把 `--match-after` 调大。
+- `map→odom` 是动态 TF，工具启动前的那段历史补不回来；要看完整初始化过程就尽早启动。
+- 长时间运行（>1 h）时 `--window` 只限制**显示**，内存里仍保留全程；需要更长时间建议分段录。
+
+---
+
+## 5. 2026-11-04 的配套改动
 
 为了"图上看到的就是下位机收到的"，`src/srm27_nav_protocol/config/srm27_nav_protocol.yaml`
 里的速度对齐系数被去掉：
@@ -432,7 +598,7 @@ T_off 一致性  : yaw  +63.00° ± 0.035°, |t| 60.0 ± 0.7 mm
 
 ---
 
-## 5. 常见问题
+## 6. 常见问题
 
 | 现象 | 排查 |
 | --- | --- |

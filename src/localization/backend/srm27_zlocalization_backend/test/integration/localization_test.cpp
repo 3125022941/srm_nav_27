@@ -5,6 +5,66 @@ namespace backend {
 namespace {
 using testing::LocalizationFlow;
 
+class PriorLoopFlow : public LocalizationFlow, public ::testing::WithParamInterface<bool> {};
+
+/// 真正提交回环（含超过 fixed-lag 的历史节点），并验证 UWB 接纳和重置后双库隔离。
+TEST_P(PriorLoopFlow, PriorLoopAndOptionalUwbSurviveEpochResetWithIndependentStores) {
+    config.startup_hint.T_map_sensor = Eigen::Matrix4d::Identity();
+    config.loop.enabled = true;
+    config.loop.cooldown_keyframes = 2;
+    config.loop.candidate_max_distance = 2;
+    config.graph.fixed_lag_seconds = 1;
+    config.uwb.enabled = GetParam();
+    reset.available = true;
+    start(true);
+    const auto prior_revision = prior.revision();
+    const auto descriptor_revision = prior_descriptor.revision();
+    bool uwb_accepted = false;
+    for (int index = 0; index < 6; ++index) {
+        const double time = 10 + index;
+        const auto pose = testing::scenePose(.01 * index, 0, 0, 0);
+        if (GetParam()) {
+            ASSERT_TRUE(controller->ingestUwbPosition(time, pose.block<3, 1>(0, 3)));
+        }
+        ASSERT_TRUE(ingest(frame(time, pose, pose)));
+        maintain();
+        ASSERT_EQ(controller->status(), LocalizationStatus::Normal);
+        uwb_accepted |= controller->snapshot().localization.reason.find("UWB NIS=") != std::string::npos;
+    }
+    ASSERT_FALSE(controller->visualization().loop_edges.empty());
+    EXPECT_GT(controller->visualization().loop_edges.back().first, 3);
+    EXPECT_EQ(trajectory.size(), 6U);
+    EXPECT_EQ(descriptor.size(), trajectory.size());
+    if (GetParam()) {
+        EXPECT_TRUE(uwb_accepted);
+    }
+    ASSERT_TRUE(controller->requestCoordinatedReset());
+    reply(FrontendResetOutcome::Completed, 1);
+    const auto pose = testing::scenePose(.06, 0, 0, 0);
+    if (GetParam()) {
+        ASSERT_TRUE(controller->ingestUwbPosition(16, pose.block<3, 1>(0, 3)));
+    }
+    ASSERT_TRUE(ingest(frame(16, pose, Eigen::Matrix4d::Identity(), 1)));
+    maintain();
+    ASSERT_EQ(controller->status(), LocalizationStatus::Normal);
+    EXPECT_EQ(trajectory.size(), 7U);
+    EXPECT_EQ(descriptor.size(), trajectory.size());
+    EXPECT_EQ(trajectory.latest().epoch, 1U);
+    EXPECT_EQ(prior.size(), 1U);
+    EXPECT_EQ(prior_descriptor.size(), 1U);
+    EXPECT_EQ(prior.revision(), prior_revision);
+    EXPECT_EQ(prior_descriptor.revision(), descriptor_revision);
+}
+
+INSTANTIATE_TEST_SUITE_P(WithAndWithoutUwb, PriorLoopFlow, ::testing::Bool());
+
+TEST_F(LocalizationFlow, PriorAndLoopRejectSharedDescriptorStorage) {
+    config.prior_map_enabled = true;
+    config.loop.enabled = true;
+    EXPECT_THROW((Localization(trajectory, prior, descriptor, descriptor, config, clock,
+                               reset, states, visualization)), std::invalid_argument);
+}
+
 /// 验证先验重定位、后续跟踪及输出版本更新，同一几何观测只提交一次。
 TEST_F(LocalizationFlow, PriorRecoveryAndTrackingCommitGeometryOnce) {
     const auto anchor = testing::scenePose(.2, -.1, .05, .05);
@@ -169,16 +229,20 @@ TEST_F(LocalizationFlow, InvalidLidarModelCannotBeHiddenByConsistentUwbEvidence)
     EXPECT_FALSE(controller->projectionIsCurrent(before));
 }
 
-/// 通过先验地图位姿约束，联合标定原始 UWB 坐标并检查对齐结果。
-TEST_F(LocalizationFlow, PriorTrackingCalibratesRawUwbCoordinatesFromIndependentAnchors) {
+class PriorUwbCalibrationFlow : public LocalizationFlow, public ::testing::WithParamInterface<bool> {};
+
+/// 有/无回环时，通过先验位姿联合标定原始 UWB 坐标并实际接纳因子。
+TEST_P(PriorUwbCalibrationFlow, PriorTrackingCalibratesRawUwbCoordinatesFromIndependentAnchors) {
     config.startup_hint.T_map_sensor = Eigen::Matrix4d::Identity();
     config.uwb.enabled = true;
     config.uwb.use_z = false;
     config.uwb.estimate_zero_pose_online = true;
     config.uwb.estimate_time_offset_online = true;
+    config.loop.enabled = GetParam();
     start(true);
     const auto T_map_uwb = testing::scenePose(1, -2, 0, .25);
     FrontendFrame current;
+    bool uwb_accepted = false;
     for (int index = 0; index < 14; ++index) {
         const auto truth = testing::scenePose(.35 * index, .15 * (index % 3), 0, 0);
         const Eigen::Vector3d raw = T_map_uwb.block<3, 3>(0, 0).transpose() *
@@ -188,12 +252,19 @@ TEST_F(LocalizationFlow, PriorTrackingCalibratesRawUwbCoordinatesFromIndependent
         ASSERT_TRUE(ingest(current));
         maintain();
         ASSERT_EQ(controller->status(), LocalizationStatus::Normal);
+        uwb_accepted |= controller->snapshot().localization.reason.find("UWB NIS=") != std::string::npos;
     }
     const auto position = controller->latestUwbBodyPositionMap();
     ASSERT_TRUE(position);
     EXPECT_LT((position->head<2>() - current.odom_pose.block<2, 1>(0, 3)).norm(), .03);
     EXPECT_LT((output(current).T_map_sensor - current.odom_pose).norm(), .01);
+    EXPECT_TRUE(uwb_accepted);
+    if (GetParam()) {
+        EXPECT_FALSE(controller->visualization().loop_edges.empty());
+    }
 }
+
+INSTANTIATE_TEST_SUITE_P(WithAndWithoutLoop, PriorUwbCalibrationFlow, ::testing::Bool());
 
 /// UWB 启动对齐拒绝离群样本后，继续使用新观测建立可信定位。
 TEST_F(LocalizationFlow, UwbBootstrapRejectsAnOutlierOnceThenAcceptsFreshEvidence) {

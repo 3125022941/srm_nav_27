@@ -36,7 +36,7 @@
 #   否则多个节点会争抢 map->odom。
 #
 #   Z-Localization backend 实验模式 (默认关闭; 验收未通过前不要用于正式评测):
-#   ./scripts/bringup/start_sim_nav.sh --lio --zloc-backend --zloc-map <先验地图包目录>
+#   ./scripts/bringup/start_sim_nav.sh --lio --zloc-backend --zloc-prior --zloc-map <先验地图包目录>
 #     由 srm27_zlocalization_backend 用先验地图包发布 map->odom；静态 map->odom、
 #     small_gicp、slam_toolbox 都不会启动（launch 里有冲突检查）。需要 --lio +
 #     --lio-frontend zlio。先验地图包必须由 maps/pcd/<site>_mapframe.pcd 生成
@@ -110,10 +110,14 @@
 #                                  * 需要 --lio; --gicp 暂不接入 ZLIO。
 #                                  环境变量: LIO_FRONTEND
 #       --zloc-backend           Z-Localization backend 实验模式 (默认关闭):
-#                                先验地图包 -> backend_node 发布 map->odom。
-#                                需要 --lio + --lio-frontend zlio + --zloc-map;
+#                                backend_node 统一融合并发布 map->odom。
+#                                需要 --lio + --lio-frontend zlio；三项融合能力独立选择；
 #                                与 --gicp/--no-lio 互斥（map->odom 只能有一个所有者）。
-#       --zloc-map <目录>        先验地图包目录（keyframes.txt + clouds/ + 描述子）
+#       --zloc-prior            启用先验配准（默认关闭；需要 --zloc-map）
+#       --zloc-loop             启用运行轨迹回环（默认关闭，可与先验/UWB 同开）
+#       --zloc-uwb              启用 UWB 融合（默认关闭；需配置实际话题/坐标/外参）
+#       --zloc-config <文件>    backend YAML 绝对路径（可用 extends 继承默认配置）
+#       --zloc-map <目录>       先验地图包绝对路径，仅指定路径，不隐式启用先验
 #       --zloc-trajectory <目录> backend 轨迹地图包输出目录（先验定位不使用）
 #       --gicp / --no-gicp       是否用 GICP 初始重定位 (默认关闭 = 原来的静态地图模式)
 #       --prior-pcd <绝对路径>   先验点云 PCD (--gicp 时必填)
@@ -270,6 +274,11 @@ INIT_POSE="${INIT_POSE:-}"                   # map->odom 初值 [x,y,z,roll,pitc
 # Z-Localization backend 实验模式（默认关闭）。map->odom 的第五个候选所有者，
 # 与 --gicp / 真值里程计互斥；backend 只吃 ZLIO 的 FrontendFrame，故要求 --lio + zlio。
 USE_ZLOC="${USE_ZLOC:-0}"
+# 三项能力仅由本次 CLI 显式开启，不继承环境变量中的历史开关。
+ZLOC_PRIOR=0
+ZLOC_LOOP=0
+ZLOC_UWB=0
+ZLOC_CONFIG=""
 ZLOC_MAP="${ZLOC_MAP:-}"                     # 先验地图包目录（绝对路径）
 ZLOC_TRAJECTORY_DIR="${ZLOC_TRAJECTORY_DIR:-}"
 GICP_RUN_ID="${GICP_RUN_ID:-}"               # 写入逐次诊断的试验编号
@@ -308,6 +317,10 @@ while [ $# -gt 0 ]; do
     --gicp)       USE_GICP="1"; shift ;;
     --no-gicp)    USE_GICP="0"; shift ;;
     --zloc-backend|--backend) USE_ZLOC="1"; shift ;;
+    --zloc-prior) ZLOC_PRIOR=1; shift ;;
+    --zloc-loop)  ZLOC_LOOP=1; shift ;;
+    --zloc-uwb)   ZLOC_UWB=1; shift ;;
+    --zloc-config) ZLOC_CONFIG="${2:?--zloc-config 需要配置文件}"; shift 2 ;;
     --zloc-map)   ZLOC_MAP="${2:?--zloc-map 需要先验地图包目录}"; shift 2 ;;
     --zloc-trajectory) ZLOC_TRAJECTORY_DIR="${2:?--zloc-trajectory 需要目录}"; shift 2 ;;
     --lio)        USE_LIO_ODOMETRY="1"; LIO_CLI_GIVEN=1; shift ;;
@@ -708,24 +721,37 @@ if [ "$USE_ZLOC" = "true" ] && [ "$USE_GICP" = "true" ]; then
 fi
 if [ "$USE_ZLOC" = "true" ] && [ "$USE_LIO_ODOMETRY" != "true" ]; then
   echo "[错误] --zloc-backend 需要 --lio: backend 依赖 ZLIO 的 FrontendFrame 输入。" >&2
-  echo "       用法: ./scripts/bringup/start_sim_nav.sh --lio --zloc-backend --zloc-map <dir>" >&2
+  echo "       用法: ./scripts/bringup/start_sim_nav.sh --lio --zloc-backend --zloc-prior --zloc-map <dir>" >&2
+  exit 2
+fi
+if [ "$USE_ZLOC" != "true" ] && { [ "$ZLOC_PRIOR" = "1" ] || [ "$ZLOC_LOOP" = "1" ] || [ "$ZLOC_UWB" = "1" ] || [ -n "$ZLOC_CONFIG" ]; }; then
+  echo "[错误] --zloc-prior / --zloc-loop / --zloc-uwb / --zloc-config 需要 --zloc-backend。" >&2
   exit 2
 fi
 if [ "$USE_ZLOC" = "true" ]; then
   _zloc_problems=()
   [ "$LIO_FRONTEND" = "zlio" ] || _zloc_problems+=("需要 --lio-frontend zlio（当前: $LIO_FRONTEND）")
-  if [ -z "$ZLOC_MAP" ]; then
-    _zloc_problems+=("需要 --zloc-map <先验地图包目录>")
-  elif [ ! -d "$ZLOC_MAP" ]; then
-    _zloc_problems+=("--zloc-map 目录不存在: $ZLOC_MAP")
-  elif [ ! -f "$ZLOC_MAP/keyframes.txt" ]; then
-    _zloc_problems+=("--zloc-map 不是地图包（缺 keyframes.txt）: $ZLOC_MAP")
+  if [ "$ZLOC_PRIOR" = "1" ]; then
+    if [ -z "$ZLOC_MAP" ]; then
+      _zloc_problems+=("需要 --zloc-map <先验地图包目录>")
+    elif [ ! -d "$ZLOC_MAP" ]; then
+      _zloc_problems+=("--zloc-map 目录不存在: $ZLOC_MAP")
+    elif [ ! -f "$ZLOC_MAP/keyframes.txt" ]; then
+      _zloc_problems+=("--zloc-map 不是地图包（缺 keyframes.txt）: $ZLOC_MAP")
+    fi
   fi
   case "$ZLOC_MAP" in
     /*) ;;
     "") ;;
     *) _zloc_problems+=("--zloc-map 必须是绝对路径: $ZLOC_MAP") ;;
   esac
+  if [ -n "$ZLOC_CONFIG" ]; then
+    [ -f "$ZLOC_CONFIG" ] || _zloc_problems+=("--zloc-config 文件不存在: $ZLOC_CONFIG")
+    case "$ZLOC_CONFIG" in
+      /*) ;;
+      *) _zloc_problems+=("--zloc-config 必须是绝对路径: $ZLOC_CONFIG") ;;
+    esac
+  fi
   if [ "${#_zloc_problems[@]}" -gt 0 ]; then
     echo "[错误] --zloc-backend 模式配置不完整:" >&2
     for _p in "${_zloc_problems[@]}"; do echo "[错误]   - $_p" >&2; done
@@ -877,7 +903,13 @@ else
     if [ "$USE_ZLOC" = "true" ]; then
       # 唯一 map->odom 所有者换成 backend_node（launch 会同时关掉静态 TF 与 GICP）。
       NAV_EXTRA_ARGS="$NAV_EXTRA_ARGS use_zlocalization_backend:=True"
-      NAV_EXTRA_ARGS="$NAV_EXTRA_ARGS zlocalization_prior_map:=${ZLOC_MAP}"
+      NAV_EXTRA_ARGS="$NAV_EXTRA_ARGS zlocalization_prior_enabled:=$ZLOC_PRIOR"
+      NAV_EXTRA_ARGS="$NAV_EXTRA_ARGS zlocalization_loop_enabled:=$ZLOC_LOOP"
+      NAV_EXTRA_ARGS="$NAV_EXTRA_ARGS zlocalization_uwb_enabled:=$ZLOC_UWB"
+      if [ -n "$ZLOC_CONFIG" ]; then
+        NAV_EXTRA_ARGS="$NAV_EXTRA_ARGS zlocalization_backend_config:=$(printf '%q' "$ZLOC_CONFIG")"
+      fi
+      NAV_EXTRA_ARGS="$NAV_EXTRA_ARGS zlocalization_prior_map:=$(printf '%q' "$ZLOC_MAP")"
       if [ -n "$ZLOC_TRAJECTORY_DIR" ]; then
         NAV_EXTRA_ARGS="$NAV_EXTRA_ARGS zlocalization_trajectory_directory:=${ZLOC_TRAJECTORY_DIR}"
       fi
@@ -1102,6 +1134,7 @@ printf '控制器    : %s%s\n' "$CONTROLLER" \
 if [ "$USE_ZLOC" = "true" ]; then
   printf '定位方式  : Z-Localization backend (map->odom 由 backend_node 发布, 实验模式)\n'
   printf '先验地图包: %s\n' "$ZLOC_MAP"
+  printf '融合开关  : prior=%s loop=%s uwb=%s (1=开, 0=关)\n' "$ZLOC_PRIOR" "$ZLOC_LOOP" "$ZLOC_UWB"
   printf '            static map->odom / small_gicp / slam_toolbox 均不启动\n'
 elif [ "$USE_GICP" = "true" ]; then
   printf '定位方式  : GICP 初始重定位 (slam:=False, use_pcd_localization:=True, use_lio_odometry:=False)\n'

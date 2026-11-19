@@ -46,7 +46,11 @@ common:
     # 描述子输入点云的体素边长，单位为米。
     downsample: 0.6
     # 描述子使用的雷达安装高度，单位为米。
-    lidar_height: 0.35
+    # 必须与建包时的 `--sc-lidar-height`（不显式给时等于 `--sensor-z`）逐位一致：
+    # storage.cpp 按 1e-6 比较几何配置，不一致会在启动时 FATAL
+    # "failed to load Scan Context descriptors"。取 URDF 的雷达离地高度
+    # 0.346388 m → 0.3464，与所有文档里的 `--sc-lidar-height 0.3464` 对齐。
+    lidar_height: 0.3464
     # 一个描述子栅格成为有效栅格所需的最少点数。
     min_bin_points: 1
     # 每个关键帧的描述子总数，包含原始描述子。
@@ -68,8 +72,8 @@ common:
   # 后端维护调度周期，单位为秒。
   maintenance_period: 0.2
 prior_map:
-  # 是否加载并冻结不可变先验地图。
-  enabled: true
+  # 是否加载并冻结不可变先验地图；入口 --zloc-prior 显式开启。
+  enabled: false
   # 先验地图包目录。必须由入口以**绝对路径**传入（backend.launch.py 的 prior_map:=）。
   # 上游默认 pcd/rmuc 相对进程 CWD 解析，本工作区不允许这种隐式依赖。
   directory: ""
@@ -198,8 +202,8 @@ recovery:
   # LOST 状态是否持续自动尝试全局恢复。
   automatic_when_lost: true
 uwb:
-  # 是否接入 UWB 位置观测。本车没有 UWB 硬件，默认关闭；开启前须先核对
-  # uwb.frame / antenna_position_body 与整车 TF。
+  # 是否接入 UWB 位置观测，入口 --zloc-uwb 显式开启。
+  # 下列外参/时间偏置沿用迁入基线，须按现场硬件核对；开关不代表已完成标定。
   enabled: false
   # 是否信任并使用 UWB 的 Z 方向观测。
   use_z: false
@@ -269,8 +273,8 @@ uwb:
     # 无先验 UWB 图保持前端重力轴的 roll/pitch 标准差，单位为度。
     gravity_alignment_std_deg: 1.0
 loop:
-  # 是否在无先验图时启用运行轨迹回环。
-  enabled: true
+  # 是否启用运行轨迹回环；可与先验和 UWB 共存，入口 --zloc-loop 显式开启。
+  enabled: false
   # 回环目标子图最多包含的历史关键帧数。
   target_keyframes: 17
   # 回环目标子图的空间搜索半径，单位为米；0 表示不限。

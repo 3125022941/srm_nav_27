@@ -26,7 +26,10 @@ struct BuildOptions {
     double x_max = 28.0;
     double y_min = 0.0;
     double y_max = 15.0;
-    double sensor_z = 0.35;
+    // 雷达离地高度：既写关键帧 z，也作为 Scan Context 的默认 lidar_height。
+    // 必须与 config/backend.yaml 的 scan_context.lidar_height 一致（本车 URDF 0.346388 → 0.3464），
+    // 否则建出来的地图包会在 backend 启动时被几何配置校验拒绝（storage.cpp 的 1e-6 比较）。
+    double sensor_z = 0.3464;
     double query_step = 2.0;
     double bundle_step = 1.5;
     std::vector<double> query_yaws_deg{0.0, 90.0, 180.0, -90.0};

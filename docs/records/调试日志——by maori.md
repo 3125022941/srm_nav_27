@@ -573,3 +573,11 @@ ros2 launch srm27_nav_protocol srm27_nav_protocol.launch.py
 
 ./scripts/bringup/start_real_nav.sh -m 227_1113pro --controller minco --chassis-spin-sine --spin-max 6  --spin-min 2 --spin-period 1.5
 ```
+# 2026-11-19
+### 验收定位后端工具
+```bash
+./debug_tools/plot_backend_correction.py
+
+# 保存数据
+./debug_tools/plot_backend_correction.py --duration 120 --headless --save /user_log/pic.png
+```

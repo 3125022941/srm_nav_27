@@ -100,7 +100,7 @@ map→odom：静态 TF（--lio）| small_gicp（--reloc）| slam_toolbox（--sla
 | GICP 重定位 | `--reloc`（默认前端 `point_lio` 时） | small_gicp 与 `maps/pcd/<site>_mapframe.pcd` 配准 |
 | SLAM | `--slam` | `slam_toolbox` 发布 `map→odom`，边建图边导航 |
 | 静态地图 | `--static` | 只加载栅格图 + 静态 TF；仅当外部提供 `odom→base_link` 时可用 |
-| 定位后端 | `--zloc-backend --zloc-map <目录>` | Z-Localization backend 用先验地图包发布 `map→odom`；**实验模式，默认关闭** |
+| 定位后端 | `--zloc-backend --zloc-prior --zloc-map <目录>` | Z-Localization backend 用先验地图包发布 `map→odom`；**实验模式，默认关闭** |
 
 仿真导航：
 
@@ -110,7 +110,7 @@ map→odom：静态 TF（--lio）| small_gicp（--reloc）| slam_toolbox（--sla
 | ZLIO | `--lio`（默认前端） | `frontend` + `zlio_bridge` |
 | Point-LIO | `--lio --lio-frontend point_lio` | 回退前端 |
 | GICP | `--gicp --prior-pcd <pcd>` | 先验点云重定位 |
-| 定位后端 | `--lio --zloc-backend --zloc-map <目录>` | backend 用先验地图包发布 `map→odom`（实验，默认关闭） |
+| 定位后端 | `--lio --zloc-backend --zloc-prior --zloc-map <目录>` | backend 用先验地图包发布 `map→odom`（实验，默认关闭） |
 
 backend 模式的 TF 所有权、输入契约与 reset 语义见
 [`docs/architecture/localization_backend.md`](docs/architecture/localization_backend.md)。
@@ -139,7 +139,9 @@ source install/setup.bash
 
 ```bash
 ./scripts/setup/install_gtsam_4_2.sh     # 默认 ~/.local/gtsam-4.2.0
-source ~/.local/gtsam-4.2.0/env.sh       # 导出 GTSAM_DIR / LD_LIBRARY_PATH
+# 家目录不可写时装到工作区（本机现有安装就在这，backend 的 build 缓存也指着它）：
+GTSAM_PREFIX=$PWD/.deps/gtsam-4.2.0 ./scripts/setup/install_gtsam_4_2.sh
+source scripts/setup/env_srm27.sh        # ROS + 本工作区 + GTSAM（自动探测前缀）
 colcon build --packages-select srm27_zlocalization_backend
 ```
 

@@ -20,6 +20,8 @@
 # ====
 #   ./scripts/setup/install_gtsam_4_2.sh                    # 默认前缀 ~/.local/gtsam-4.2.0
 #   GTSAM_PREFIX=/abs/path ./scripts/setup/install_gtsam_4_2.sh
+#   GTSAM_MIRROR=file:///abs/dir ./scripts/setup/install_gtsam_4_2.sh
+#                                                           # 复用已下载的 deb，不联网
 #   ./scripts/setup/install_gtsam_4_2.sh --force            # 前缀已存在时重装
 #
 # 装完会打印 `source <前缀>/env.sh`；构建与运行都需要它（或等价的 GTSAM_DIR /

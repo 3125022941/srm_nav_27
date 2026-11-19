@@ -15,7 +15,7 @@
 | `src/localization/backend/srm27_localization_adapter/scripts/zlocalization_backend_adapter.py` | backend 专用输入适配 + reset 服务代理 |
 | `src/localization/backend/srm27_localization_adapter/scripts/zlio_bridge.py` | 持有该适配层（`backend_enabled:=true` 时启用） |
 | `src/bringup/srm27_nav_bringup/launch/localization_launch.py` | 启动接线 + 冲突检查 |
-| `scripts/bringup/start_real_nav.sh` / `start_sim_nav.sh` | `--zloc-backend` / `--zloc-map` |
+| `scripts/bringup/start_real_nav.sh` / `start_sim_nav.sh` | `--zloc-backend` + `--zloc-prior` / `--zloc-loop` / `--zloc-uwb` |
 
 ## 1. 谁拥有 `map → odom`
 
@@ -32,13 +32,13 @@ backend 模式下 `map → odom` 的**唯一发布者**是 `srm27_zlocalization_
 冲突检查在启动前失败，而不是"起两个节点抢 TF"：
 
 - `localization_launch.py::_validate_zlocalization_backend`：backend 模式要求
-  `use_lio_odometry:=True` + `odometry_frontend:=zlio` + 绝对路径的先验地图包；
+  `use_lio_odometry:=True` + `odometry_frontend:=zlio`；启用先验时另需绝对路径地图包；
   与 `use_pcd_localization`（GICP）互斥；同时把静态 `map→odom` 的
   `IfCondition` 从 `not use_pcd_localization` 改成
   `not (use_pcd_localization or use_zlocalization_backend)`。
 - `nav2_stack_launch.py::_validate_odometry_frontend`：backend 与 `slam:=True` 互斥。
 - `start_*_nav.sh`：`--zloc-backend` 与 `--reloc/--slam/--static/--gicp` 互斥，并要求
-  `--lio` + `--lio-frontend zlio` + `--zloc-map <绝对目录>`。
+  `--lio` + `--lio-frontend zlio`；`--zloc-prior` 开启时还要求 `--zloc-map <绝对目录>`。
 
 backend 仍然**只出 `map→odom`**：`odom→gimbal_yaw→base_link` 那条链继续由
 `sensor_scan_generation` 每帧查实时 TF 产生（云台角在这里进）。backend 的车体位姿类
@@ -188,7 +188,7 @@ backend_node ──ResetFrontend──► zlocalization/reset_frontend（适配�
 | `common.frame_topic` / `prediction_topic` / `session_topic` | `frontend/*`（相对名） | namespace 下不能抢同名绝对话题 |
 | `prior_map.directory` | `""`（必须由入口给绝对路径） | 不依赖进程 CWD |
 | `trajectory.save_directory` | `""`（必须由入口给绝对路径） | 同上 |
-| `uwb.enabled` | `false` | 本车无 UWB 硬件 |
+| `prior_map.enabled` / `loop.enabled` / `uwb.enabled` | `false` | 三项由 CLI 独立选择，默认全部关闭 |
 | `output.legacy.enabled` | `false` | 无消费者；且 `publish_tf` 会多发一条 `map→body` |
 | `output.legacy.publish_tf` | `false` | `map` 只能有 `odom` 一个子节点 |
 | `output.world_cloud.enabled` | `false` | 每帧整帧变换到 map 系是纯开销 |
@@ -207,6 +207,22 @@ backend_node ──ResetFrontend──► zlocalization/reset_frontend（适配�
 `trajectory_directory` **必须是绝对路径**，相对路径在 configure 阶段直接报错
 （`require_absolute()`），不允许"在 A 目录能起、在 B 目录起不来"。
 
+### 三项独立能力（2026-11-19）
+
+`--zloc-prior`、`--zloc-loop`、`--zloc-uwb` 均默认关闭，支持全部 8 种组合。
+`--zloc-map` 仅指定路径；`--zloc-config` 可覆盖平台算法配置文件（绝对路径，支持 `extends`）。
+脚本总是显式传递三项布尔值，未指定的开关不会被 YAML 或同名环境变量悄悄开启。
+全关时仍由 backend 发布 LIO 推算的 `map→odom`，不具备外部绝对地图约束。
+
+先验与运行回环各持有独立的描述子库。启用回环时不再裁剪运行关键帧，并自动关闭 fixed-lag，
+保留历史图变量供回环因子引用；代价是内存随轨迹增长。先验+UWB 保持联合创新门控，
+回环经过描述子、几何、PCM 和图创新检验后提交到同一个图，TF 所有权不变。
+普通协调 reset 保留图和两库；估计器数值故障只清运行轨迹/回环库，保留不可变先验。
+
+UWB 的 `topic/frame`、天线杆臂、时间偏置及固定/在线坐标对齐需按场上配置核对。
+当前 UWB 因子假设天线到前端传感器的杆臂固定；若跨越旋转云台关节，需要另外处理动态外参。
+无先验时在线坐标/时间标定会关闭，固定对齐配置仍需有效。
+
 ## 6. 依赖：GTSAM 4.2.x
 
 backend 的算法库硬依赖 GTSAM 4.2.x（`CMakeLists.txt` 拒绝 ≥4.3，
@@ -215,7 +231,9 @@ backend 的算法库硬依赖 GTSAM 4.2.x（`CMakeLists.txt` 拒绝 ≥4.3，
 
 ```bash
 ./scripts/setup/install_gtsam_4_2.sh          # 默认装到 ~/.local/gtsam-4.2.0
-source ~/.local/gtsam-4.2.0/env.sh            # 导出 GTSAM_DIR / LD_LIBRARY_PATH
+# 家目录不可写时装到工作区（本机现有安装就是 .deps/gtsam-4.2.0）：
+GTSAM_PREFIX=$PWD/.deps/gtsam-4.2.0 ./scripts/setup/install_gtsam_4_2.sh
+source scripts/setup/env_srm27.sh             # 自动探测前缀，导出 GTSAM_DIR / LD_LIBRARY_PATH
 ```
 
 构建期 `GTSAM_DIR` 指向 `.../lib/cmake/GTSAM`；运行期靠
@@ -240,8 +258,12 @@ ros2 run srm27_zlocalization_backend srm27_zlocalization_backend_build_pcd_map_b
 
 要点：
 
-- `--sensor-z` / `--sc-lidar-height` 取 URDF 的雷达离地高度（本车 0.346388 m）。
-- 描述子参数必须与定位时的 `common.scan_context.*` 一致，否则检索退化。
+- `--sensor-z` / `--sc-lidar-height` 取 URDF 的雷达离地高度（本车 0.346388 m → 0.3464），
+  且必须与 `scan_context.lidar_height` 逐位一致（`storage.cpp` 按 1e-6 比较）；环数/扇区/
+  最大半径/降采样/augment 同理。不一致时 backend 启动直接
+  `FATAL: failed to load Scan Context descriptors` —— 不会静默降级成低精度匹配。
+- 检索参数（`exclude_recent` / `candidates` / `distance_threshold`）同样沿用
+  `common.scan_context.*`，改了一个就要同步另一个。
 - `clean_map_bundle` 只对**建图阶段落盘的 runtime bundle** 有意义；对
   `build_pcd_map_bundle` 生成的 bundle 不会报错，但因为没有可见性记录会 0 点被清理。
 - 2D 栅格图（PGM）继续给 Nav2 用，两套地图并行维护；backend 接入**不改变**地图格式。
@@ -259,7 +281,7 @@ ros2 run srm27_zlocalization_backend srm27_zlocalization_backend_build_pcd_map_b
 ## 9. 已知限制（未验收项）
 
 - 未做仿真导航链（验收 E）与实车（验收 F）；精度/CPU/内存指标尚未测。
-- 回环与 UWB 未启用（UWB 无硬件；回环只在无先验图时生效）。
+- 先验+回环+UWB 共存已实现并有合成场景回归；现场三融合精度、UWB 标定和长时资源占用仍待验收。
 - backend 输出的 3D `map→odom` 未做平面化；Nav2/terrain 侧按平面消费，实车验收前
   需要确认 z/roll/pitch 的残差可接受。
 - 云台这类"传感器相对车体运动会变"的自由度上游模型里不存在：本实现只借用

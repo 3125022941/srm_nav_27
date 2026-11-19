@@ -79,7 +79,7 @@ class LocalizationFlow : public ::testing::Test {
 protected:
     Cloud::Ptr world = testing::roomCloud();
     KeyframeMap trajectory, prior;
-    ScanContextDescriptor descriptor;
+    ScanContextDescriptor descriptor, prior_descriptor;
     Config config;
     ManualClock clock;
     ResetEndpoint reset;
@@ -94,6 +94,7 @@ protected:
         options.downsample = .2;
         options.exclude_recent = 2;
         descriptor.configure(options);
+        prior_descriptor.configure(options);
         config.loop.enabled = false;
         config.keyframes.min_interval = 0;
         config.keyframes.max_interval = .5;
@@ -108,10 +109,10 @@ protected:
         if (with_prior) {
             prior.add(testing::sceneFrame(*world, 1, Eigen::Matrix4d::Identity(),
                                           Eigen::Matrix4d::Identity()));
-            rebuildMapDescriptors(descriptor, prior.snapshot());
+            rebuildMapDescriptors(prior_descriptor, prior.snapshot());
         }
-        controller = std::make_unique<Localization>(trajectory, prior, descriptor, config, clock,
-                                                    reset, states, visualization);
+        controller = std::make_unique<Localization>(trajectory, prior, prior_descriptor, descriptor,
+                                                    config, clock, reset, states, visualization);
         controller->initialize();
     }
     /// 根据独立真值位姿生成局部点云，并附带指定里程计位姿和代次。

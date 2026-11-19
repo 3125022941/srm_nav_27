@@ -150,6 +150,7 @@ private:
     KeyframeMap trajectory_;
     KeyframeMap prior_map_;
     std::unique_ptr<PlaceDescriptor> descriptor_;
+    std::unique_ptr<PlaceDescriptor> trajectory_descriptor_;
     SystemSteadyClock steady_clock_;
     std::atomic<bool> failed_{false};
     FrontendConnection frontend_;

@@ -326,7 +326,7 @@ class BackendInputAdapter:
             response.outcome = ResetFrontend.Response.REJECTED
             response.message = "front-end reset service unavailable"
             self._copy_request_identity(request, response)
-            return
+            return response
         forwarded = ResetFrontend.Request()
         forwarded.requester_instance_id = request.requester_instance_id
         forwarded.transaction_id = request.transaction_id
@@ -339,14 +339,14 @@ class BackendInputAdapter:
             response.outcome = ResetFrontend.Response.IN_PROGRESS
             response.message = "front-end reset still in progress"
             self._copy_request_identity(request, response)
-            return
+            return response
         try:
             reply = future.result()
         except Exception as error:  # noqa: BLE001 - 传输异常按不确定终态交回 backend
             response.outcome = ResetFrontend.Response.INDETERMINATE
             response.message = f"front-end reset transport failed: {error}"
             self._copy_request_identity(request, response)
-            return
+            return response
         response.outcome = reply.outcome
         response.message = reply.message
         response.requester_instance_id = reply.requester_instance_id
@@ -370,6 +370,7 @@ class BackendInputAdapter:
             f"adapted_identity_boundary={response.has_boundary}"
             "（适配后 odom 连续，边界按恒等上报）"
         )
+        return response
 
     @staticmethod
     def _copy_request_identity(request, response):

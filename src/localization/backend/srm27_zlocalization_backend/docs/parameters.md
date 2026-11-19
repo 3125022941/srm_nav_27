@@ -97,7 +97,7 @@
 
 | 键 | 类型 / 单位 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `enabled` | 布尔 | `true` | 是否加载固定先验地图定位；开启后关闭回环、退出保存和运行地图显示，关闭则维护建图轨迹 |
+| `enabled` | 布尔 | `false` | 是否加载固定先验地图定位；可与运行回环和 UWB 共存；先验模式关闭退出保存和运行地图显示 |
 | `directory` | 路径 | `pcd/rmuc` | 先验关键帧地图包目录；启用先验时必填，相对路径从运行目录算起 |
 | `voxel_resolution` | 浮点，m | `0.15` | 先验地图显示点云的体素边长，不影响配准；须 `≥0`，`0` 不降采样 |
 
@@ -192,7 +192,7 @@
 
 | 键 | 类型 / 单位 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `enabled` | 布尔 | `true` | 是否订阅并融合 UWB 位置 |
+| `enabled` | 布尔 | `false` | 是否订阅并融合 UWB 位置；导航入口由 `--zloc-uwb` 开启 |
 | `use_z` | 布尔 | `false` | 是否使用 UWB 高度；关闭时输入、标定和融合均只使用 XY |
 | `topic` | 字符串 | `/uwb_pose` | UWB 原始天线位置话题，消息类型为 `PoseStamped` |
 | `frame` | 字符串 | `uwb` | UWB 原始位置的坐标系，须非空且与消息 `frame_id` 一致；填 map 时须无坐标变换且关闭在线空间标定 |
@@ -235,7 +235,7 @@
 
 | 键 | 类型 / 单位 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `enabled` | 布尔 | `true` | 是否在建图时检测历史回环；启用先验地图或关闭描述子时会自动关闭 |
+| `enabled` | 布尔 | `false` | 是否检测运行轨迹的历史回环；可与先验地图共存，关闭描述子时会自动关闭；开启后保留完整图和运行历史 |
 | `cooldown_keyframes` | 整数，帧 | `5` | 成功回环后至少间隔多少个关键帧才再次检索；须 `≥0`，`0` 不等待 |
 | `candidate_max_distance` | 浮点，m | `7.0` | 按当前估计位置筛选回环候选的最大距离；须 `≥0`，`0` 不限距离 |
 | `descriptor_ratio_threshold` | 浮点，无量纲 | `1.0` | 最优 / 次优描述子差异的比值上限；越小越要求最优候选明显胜出，范围 `[0,1]`，`1` 关闭 |
@@ -594,7 +594,7 @@
 | `trajectory.keyframe.min_interval`、`trajectory.keyframe.max_interval` | `min_interval ≥0` s；`max_interval >0` 时启用定时触发；当前为 `0`、`0.5 s` | 关键帧的最小插入间隔与定时触发间隔 | `max_interval` 补充定时关键帧，`min_interval` 限制插入频率。当前 `0.5 s` 在输入充足时约为 `2 Hz`；结合匹配连续性和耗时调整，见 [选帧逻辑](../src/keyframe_map.cpp) |
 | `registration.voxel_resolution` | `≥0` m；当前 `0.4 m`；`0` 保留原始点密度 | 参与配准的点云空间采样尺度 | 细节不足时减小，计算过慢时增大；在同一数据上比较误差、匹配连续性和耗时。见 [配准实现](../src/registration.cpp) |
 | `tracking.target_keyframes`、`recovery.target_keyframes`、`loop.target_keyframes` | 均为 `≥1` 的整数；当前依次为 `11`、`11`、`17` | 常规跟踪、重定位、回环验证的目标子图关键帧数量上限 | 子图稀疏或覆盖不足时增加，点云密集时可减少；同时检查 `target_radius` 是否足够。比较匹配质量、内存与耗时，见 [跟踪](../src/tracking_matcher.cpp)、[重定位](../src/relocalization.cpp)、[回环](../src/loop.cpp) |
-| `loop.enabled` | 布尔；配置值为 `true`，先验模式下有效值为 `false` | 建图轨迹的历史回环检索与约束 | 建图时可开启以约束重访区域的累计漂移，同时会增加历史图的计算和内存开销。先验定位时自动关闭；见 [开关关系](../src/config.cpp) |
+| `loop.enabled` | 布尔；默认 `false`，由 `--zloc-loop` 显式开启 | 建图轨迹的历史回环检索与约束 | 建图时可开启以约束重访区域的累计漂移，同时会增加历史图的计算和内存开销。可与先验定位同时开启，先验和运行描述子独立；见 [开关关系](../src/config.cpp) |
 | `startup_hint.enabled`、`startup_hint.x`、`startup_hint.y`、`startup_hint.z`、`startup_hint.yaw_deg` | 布尔、有限位置 m 与航向 °；当前提示关闭 | 机器人启动时，车体原点在期望世界坐标系中的位置和航向 | 能在已知位置和朝向启动时填写。无先验、无 UWB 时，它决定初始世界坐标，摆放误差会带入轨迹，后续仍可能漂移；见 [初始化](../src/localization.cpp) |
 
 每次调整一组参数，用同一段数据比较定位连续性、位置误差和处理耗时。

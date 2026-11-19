@@ -211,6 +211,7 @@ def _backend_overrides(**extra):
         "use_lio_odometry": "True",
         "use_pcd_localization": "False",
         "odometry_frontend": "zlio",
+        "zlocalization_prior_enabled": "True",
         "zlocalization_prior_map": prior_map,
     }
     overrides.update(extra)
@@ -276,7 +277,8 @@ def test_backend_mode_owns_map_to_odom_and_disables_static_tf():
     include = _include_for(description, "backend.launch.py")
     _assert(include is not None and _include_enabled(include, context), "backend include 未启用")
     arguments = {key: _render(value, context) for key, value in include.launch_arguments}
-    _assert(arguments.get("mode") == "localization", "backend 必须以 localization 模式启动")
+    _assert(arguments.get("prior_enabled") == "True", "先验开关必须显式透传")
+    _assert("mode" not in arguments, "不可再用 localization 模式强制开启先验")
     _assert(
         arguments.get("prior_map") == overrides["zlocalization_prior_map"],
         f"先验地图包未透传: {arguments.get('prior_map')!r}",
@@ -374,7 +376,7 @@ def test_nav2_stack_rejects_backend_with_slam():
 
 
 def test_nav2_stack_forwards_backend_arguments():
-    """nav2_stack 必须把 4 个 backend 参数透传给 localization_launch。"""
+    """nav2_stack 必须把路径和三项独立开关透传给 localization_launch。"""
     module = _load_launch_module("srm_zloc_stack_fwd", "nav2_stack_launch.py")
     description, context = _prepare(module, _backend_overrides())
     include = _include_for(description, "localization_launch.py")
@@ -382,7 +384,8 @@ def test_nav2_stack_forwards_backend_arguments():
     arguments = {key: _render(value, context) for key, value in include.launch_arguments}
     _assert(arguments.get("use_zlocalization_backend") == "True", "backend 开关未透传")
     for key in ("zlocalization_backend_config", "zlocalization_prior_map",
-                "zlocalization_trajectory_directory"):
+                "zlocalization_trajectory_directory", "zlocalization_prior_enabled",
+                "zlocalization_loop_enabled", "zlocalization_uwb_enabled"):
         _assert(key in arguments, f"nav2_stack 未透传 {key}")
 
 
@@ -410,6 +413,32 @@ def test_entry_launches_forward_backend_arguments():
             arguments["use_zlocalization_backend"] == "False",
             f"{filename} 的 backend 默认值必须是 False（默认行为不变）",
         )
+        for feature in ("prior", "loop", "uwb"):
+            _assert(arguments[f"zlocalization_{feature}_enabled"] == "False",
+                    f"{filename} 的 {feature} 默认必须关闭")
+
+
+def test_all_eight_feature_combinations_survive_each_launch_layer():
+    """三开关在实车/仿真/stack/localization 四层均独立，不要求关闭的先验有地图。"""
+    for filename, child in (
+        ("nav_srm_real_launch.py", "nav2_stack_launch.py"),
+        ("nav_srm_simulation_launch.py", "nav2_stack_launch.py"),
+        ("nav2_stack_launch.py", "localization_launch.py"),
+        ("localization_launch.py", "backend.launch.py"),
+    ):
+        module = _load_launch_module("matrix_" + filename, filename)
+        for mask in range(8):
+            flags = {f"zlocalization_{key}_enabled": str(bool(mask & bit))
+                     for key, bit in (("prior", 1), ("loop", 2), ("uwb", 4))}
+            overrides = _backend_overrides(slam="False", **flags)
+            if not mask & 1:
+                overrides["zlocalization_prior_map"] = ""
+            description, context = _prepare(module, overrides)
+            include = _include_for(description, child)
+            arguments = {key: _render(value, context) for key, value in include.launch_arguments}
+            for name, value in flags.items():
+                target = name.removeprefix("zlocalization_") if child == "backend.launch.py" else name
+                _assert(arguments[target] == value, f"{filename} mask={mask} 丢失 {target}")
 
 
 def main():
@@ -422,6 +451,7 @@ def main():
         test_nav2_stack_rejects_backend_with_slam,
         test_nav2_stack_forwards_backend_arguments,
         test_entry_launches_forward_backend_arguments,
+        test_all_eight_feature_combinations_survive_each_launch_layer,
     ]
     for test in tests:
         test()

@@ -15,7 +15,7 @@
 | # | 用途 | 推荐命令 | 入口 launch | 默认控制器 | 默认定位/前端 | 默认参数 | 速度出口 |
 |---|---|---|---|---|---|---|---|
 | 1 | 实车导航 | `./scripts/bringup/start_real_nav.sh` | `nav_srm_real_launch.py` | MINCO (`srm27_minco_controller::MincoMpcController`) | 未显式指定时走 `--lio`：`zlio` + 静态 `map->odom`；`--reloc` 才用 small_gicp + 先验 PCD；`--zloc-backend` 用 backend（实验） | `config/real/current/nav2_params_srm_minco_fakeyaw.yaml` | `cmd_vel_nav_fake → fake_vel_transform → cmd_vel_nav_body → srm_cmd_mux → cmd_vel_chassis → srm27_nav_protocol` |
-| 2 | 仿真导航 | `./scripts/bringup/start_sim_nav.sh` | `nav_srm_simulation_launch.py` | MINCO（唯一支持；`-c omni` 已拒绝） | 默认 Gazebo 真值里程计；`--lio` 切 ZLIO（默认前端）或 `--lio-frontend point_lio`；`--gicp` 用先验 PCD；`--zloc-backend --zloc-map <dir>` 用 backend（实验） | `config/simulation/current/nav2_params_srm_fakeyaw.yaml` | `cmd_vel_nav_fake → fake_vel_transform → cmd_vel_nav_body → srm_cmd_mux → cmd_vel_sim → 适配器 → Gazebo` |
+| 2 | 仿真导航 | `./scripts/bringup/start_sim_nav.sh` | `nav_srm_simulation_launch.py` | MINCO（唯一支持；`-c omni` 已拒绝） | 默认 Gazebo 真值里程计；`--lio` 切 ZLIO（默认前端）或 `--lio-frontend point_lio`；`--gicp` 用先验 PCD；`--zloc-backend --zloc-prior --zloc-map <dir>`（可叠加 `--zloc-loop` / `--zloc-uwb`）用 backend（实验） | `config/simulation/current/nav2_params_srm_fakeyaw.yaml` | `cmd_vel_nav_fake → fake_vel_transform → cmd_vel_nav_body → srm_cmd_mux → cmd_vel_sim → 适配器 → Gazebo` |
 | 3 | 实车建图 | `./scripts/bringup/start_real_slam.sh` | `real_mapping_launch.py` | 不涉及（建图链路） | `zlio`（`--lio-frontend point_lio` 回退） | `config/real/current/mapping_params.yaml` + `zlio_mid360.yaml` | 不涉及导航；底盘串口由 `srm27_nav_protocol` 单独启动 |
 | 4 | 仿真建图 | `./scripts/bringup/start_sim_slam.sh` | `sim_slam_launch.py` | 不涉及（建图链路） | Point-LIO | `config/simulation/current/nav2_params_srm.yaml` + Point-LIO `mid360.yaml` | 不涉及导航；Gazebo 由脚本单独拉起 |
 
@@ -67,7 +67,7 @@
 | GICP 重定位 | `--reloc` / `--gicp` | `small_gicp_relocalization` | current |
 | SLAM | `--slam` | `slam_toolbox` | current |
 | 静态地图 | `--static` | `tf2_ros static_transform_publisher`（无里程计） | current |
-| 定位后端 | `--zloc-backend --zloc-map <绝对目录>` | `srm27_zlocalization_backend_node` | **experimental（默认关闭）** |
+| 定位后端 | `--zloc-backend --zloc-prior --zloc-map <绝对目录>`（回环/UWB 另加 `--zloc-loop` / `--zloc-uwb`） | `srm27_zlocalization_backend_node` | **experimental（默认关闭）** |
 
 约束（三层检查，任何一层不满足都在启动前失败，不会出现两个发布者抢 TF）：
 

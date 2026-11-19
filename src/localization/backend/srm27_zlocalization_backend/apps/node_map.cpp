@@ -29,6 +29,12 @@ bool LocalizationNode::loadPriorMap(const std::string& directory) {
     if (!descriptor_->load(directory)) {
         RCLCPP_ERROR_STREAM(get_logger(), "failed to load " << descriptor_->name()
                                                             << " descriptors from " << directory);
+        // 具体差异由 storage.cpp 打在 stderr（"saved SC config does not match ..."），
+        // 这里补一条可操作的提示：最常见的原因是建包参数与 backend.yaml 不一致。
+        RCLCPP_ERROR_STREAM(get_logger(),
+                            "  -> 核对建包时的 --sc-* 与 scan_context.* 是否逐位一致"
+                            "（尤其中继/建包的 --sc-lidar-height 必须等于 scan_context.lidar_height，"
+                            "URDF 值 0.346388 -> 统一取 0.3464）；不一致就用相同参数重建地图包。");
         return false;
     }
     const std::vector<Keyframe> keyframes = prior_map_.snapshot();

@@ -147,7 +147,7 @@ ros2 run sensor_scan_generation sensor_scan_generation_node --ros-args \
 先用本场地图生成地图包（**必须**地图系那份 `_mapframe.pcd`）：
 
 ```bash
-source ~/.local/gtsam-4.2.0/env.sh        # 没有就 ./scripts/setup/install_gtsam_4_2.sh
+source scripts/setup/env_srm27.sh         # ROS + 本工作区 + GTSAM；没装 GTSAM 见 scripts/setup/install_gtsam_4_2.sh
 ros2 run srm27_zlocalization_backend srm27_zlocalization_backend_build_pcd_map_bundle \
   --input maps/pcd/<site>_mapframe.pcd \
   --out-bundle ~/srm_nav_27_data/zlocalization/map_bundles/<site> \

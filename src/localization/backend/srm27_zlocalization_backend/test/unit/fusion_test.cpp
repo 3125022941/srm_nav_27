@@ -8,6 +8,30 @@
 
 namespace backend {
 namespace {
+TEST(BackendCapabilities, DefaultsOffAndAllEightSelectionsRemainIndependent) {
+    const Config defaults;
+    EXPECT_FALSE(defaults.prior_map_enabled);
+    EXPECT_FALSE(defaults.loop.enabled);
+    EXPECT_FALSE(defaults.uwb.enabled);
+    for (int mask = 0; mask < 8; ++mask) {
+        SCOPED_TRACE(mask);
+        Config requested;
+        requested.prior_map_enabled = (mask & 1) != 0;
+        requested.loop.enabled = (mask & 2) != 0;
+        requested.uwb.enabled = (mask & 4) != 0;
+        const auto effective = resolveConfig(requested, true).values;
+        EXPECT_EQ(effective.prior_map_enabled, requested.prior_map_enabled);
+        EXPECT_EQ(effective.loop.enabled, requested.loop.enabled);
+        EXPECT_EQ(effective.uwb.enabled, requested.uwb.enabled);
+        EXPECT_DOUBLE_EQ(effective.graph.fixed_lag_seconds,
+                         requested.loop.enabled ? 0.0 : requested.graph.fixed_lag_seconds);
+    }
+    Config unavailable;
+    unavailable.prior_map_enabled = true;
+    unavailable.loop.enabled = true;
+    EXPECT_FALSE(resolveConfig(unavailable, false).values.loop.enabled);
+}
+
 /// 同一 UWB 位置解的高频保持重发不推进有效观测时间。
 TEST(UwbStream, HeldTransmissionsDoNotCreateNewPhysicalSamples) {
     UwbObservationStream stream({true, false, 1});

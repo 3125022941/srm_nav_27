@@ -71,8 +71,8 @@ backend 按 `map_from_sensor · (T_odom_sensor)⁻¹` 求 `map→odom`，`T_odom
 `MAKEFLAGS=-j4`、`--parallel-workers 1`（逐包串行；见 §7 的机器限制）。
 
 ```bash
-./scripts/setup/install_gtsam_4_2.sh
-source ~/.local/gtsam-4.2.0/env.sh
+GTSAM_PREFIX=$PWD/.deps/gtsam-4.2.0 ./scripts/setup/install_gtsam_4_2.sh
+source .deps/gtsam-4.2.0/env.sh
 colcon build --build-base build_zloc --install-base install_zloc \
   --parallel-workers 1 \
   --packages-select srm27_zlocalization_backend srm27_localization_adapter srm27_nav_bringup \
@@ -159,7 +159,7 @@ srm27_zlocalization_backend_build_pcd_map_bundle \
 | 项 | 值 |
 |---|---|
 | GTSAM 来源 | ROS 2 Humble 官方 deb `ros-humble-gtsam 4.2.0-3jammy.20260226.005743`（amd64） |
-| 安装方式 | `dpkg-deb -x` 解到用户前缀（不写 dpkg 数据库，删目录即回退） |
+| 安装方式 | `dpkg-deb -x` 解到工作区前缀 `.deps/gtsam-4.2.0`（不写 dpkg 数据库，删目录即回退；`~/.local` 在沙箱内不可写） |
 | 构建期 | `GTSAM_DIR=<prefix>/lib/cmake/GTSAM`（版本 4.2.0，CMake 拒绝 ≥4.3） |
 | 运行期 | `libgtsam.so.4` + `libmetis-gtsam.so` 由可执行文件 RPATH 解析（`--disable-new-dtags` + `BUILD/INSTALL_RPATH=$<TARGET_FILE_DIR:gtsam>`）；`ldd` 在**不带** `LD_LIBRARY_PATH` 的情况下能解析两者 |
 | 其它依赖 | PCL 1.12、Eigen 3.4、nanoflann 1.4、oneTBB 2021.5、OpenMP、Boost 1.74（系统已有） |
@@ -210,8 +210,10 @@ srm27_zlocalization_backend_build_pcd_map_bundle \
 ```bash
 # 启用（实验）
 ./scripts/bringup/start_real_nav.sh --lio --lio-frontend zlio \
-  --zloc-backend --zloc-map /abs/path/to/bundle
-./scripts/bringup/start_sim_nav.sh --lio --zloc-backend --zloc-map /abs/path/to/bundle
+  --zloc-backend --zloc-prior --zloc-map /abs/path/to/bundle
+./scripts/bringup/start_sim_nav.sh --lio --zloc-backend --zloc-prior --zloc-map /abs/path/to/bundle
+# 注：当时 `--zloc-map` 隐含开启先验；2026-11-19 起需显式 `--zloc-prior`，
+#     回环/UWB 分别用 `--zloc-loop` / `--zloc-uwb`。
 
 # 回退：去掉 --zloc-backend 即回到 --lio + 静态 map->odom
 # 或改用 GICP：--reloc（需要先验 PCD）

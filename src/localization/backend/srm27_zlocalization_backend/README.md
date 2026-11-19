@@ -20,7 +20,8 @@
 
 ## 本工作区的改造
 
-迁入时只改"包名 / 构建 / 安装路径 / 接线"，算法文件尽量与上游逐行一致：
+迁入基线主要改包名、构建、安装路径和接线。2026-11-19 增加先验/回环/UWB 独立开关，
+并拆分先验与运行描述子库，使先验跟踪和运行轨迹回环能够共存：
 
 | 项 | 上游 | 本工作区 |
 | --- | --- | --- |
@@ -32,7 +33,7 @@
 | C++ namespace | `backend` | 不变（可选） |
 | 输入话题 | 绝对名 `/frontend/frame` 等 | 相对名 `frontend/frame`（随 namespace 解析） |
 | `map->body` / legacy 输出 / `world_cloud` | 默认开 | **默认关**（本工作区无消费者，且会多发一条 TF） |
-| UWB | 默认开 | **默认关**（本车没有 UWB 硬件） |
+| 先验 / 回环 / UWB | 先验模式强制关闭回环 | 三项默认关，可独立选择或同时启用 |
 | 先验地图/轨迹目录 | 相对进程 CWD | 必须由入口给绝对路径，否则 configure 阶段报错 |
 | reset 服务 | 直连前端 `/zlio/reset_internal` | 走适配层代理 `zlocalization/reset_frontend` |
 
@@ -80,18 +81,24 @@ src/localization/backend/srm27_zlocalization_backend/
 | 系统环境 | Ubuntu 22.04、ROS 2 Humble |
 | 编译与构建 | C++ ≥ 17、CMake ≥ 3.16、ament_cmake |
 | C++ 库 | GTSAM 4.2.x、Eigen、PCL、nanoflann、oneTBB、OpenMP C++、Threads |
+| ROS 包 | rclcpp、std_msgs、std_srvs、geometry_msgs、nav_msgs、sensor_msgs、visualization_msgs、tf2、tf2_ros、tf2_eigen、pcl_conversions、message_filters |
+| 工作区包 | localization_interfaces |
+| 启动与显示 | launch、launch_ros、ament_index_python、rviz2、PyYAML |
+| 测试依赖 | ament_cmake_gtest、ament_cmake_pytest、launch_testing_ament_cmake、rclpy、rcl_interfaces、domain_coordinator、sensor_msgs_py、NumPy |
 
 GTSAM 被**硬锁在 4.2.x**（`CMakeLists.txt` 拒绝 ≥4.3，`package.xml` 写
 `version_gte="4.2.0" version_lt="4.3.0"`）。本机没有 root 时用仓库脚本装到用户目录：
 
 ```bash
 ./scripts/setup/install_gtsam_4_2.sh    # 默认 ~/.local/gtsam-4.2.0
-source ~/.local/gtsam-4.2.0/env.sh      # GTSAM_DIR + LD_LIBRARY_PATH
+# 家目录不可写时装到工作区（本机现有安装；deb 已在 .deps 时可离线复用）：
+GTSAM_PREFIX=$PWD/.deps/gtsam-4.2.0 \
+GTSAM_MIRROR=file://$PWD/.deps ./scripts/setup/install_gtsam_4_2.sh
 ```
-| ROS 包 | rclcpp、std_msgs、std_srvs、geometry_msgs、nav_msgs、sensor_msgs、visualization_msgs、tf2、tf2_ros、tf2_eigen、pcl_conversions、message_filters |
-| 工作区包 | localization_interfaces |
-| 启动与显示 | launch、launch_ros、ament_index_python、rviz2、PyYAML |
-| 测试依赖 | ament_cmake_gtest、ament_cmake_pytest、launch_testing_ament_cmake、rclpy、rcl_interfaces、domain_coordinator、sensor_msgs_py、NumPy |
+
+构建/运行时不单独 source `env.sh`：`scripts/setup/env_srm27.sh` 会按
+`SRM27_GTSAM_PREFIX` → `~/.local/gtsam-4.2.0` → `.deps/gtsam-4.2.0` 探测前缀，
+并导出 `GTSAM_DIR` / `LD_LIBRARY_PATH`。
 
 ## 快速开始
 
@@ -112,14 +119,40 @@ ros2 launch srm27_zlocalization_backend body_calibration.launch.py
 
 ```bash
 ./scripts/bringup/start_real_nav.sh --lio --lio-frontend zlio \
-  --zloc-backend --zloc-map /absolute/path/to/map_bundle
-./scripts/bringup/start_sim_nav.sh --lio --zloc-backend --zloc-map /absolute/path/to/map_bundle
+  --zloc-backend --zloc-prior --zloc-map /absolute/path/to/map_bundle
+./scripts/bringup/start_sim_nav.sh --lio --zloc-backend --zloc-prior --zloc-map /absolute/path/to/map_bundle
 ```
+
+三个功能开关 `--zloc-prior`、`--zloc-loop`、`--zloc-uwb` 独立，省略即关闭；
+`--zloc-map` 只指定地图目录，不能代替 `--zloc-prior`。三项都省略时 backend 只传播 LIO，
+没有先验地图或 UWB 的绝对定位约束。实车与仿真脚本语义相同。
+
+```bash
+./scripts/bringup/start_real_nav.sh \
+  -m "$PWD/maps/227_1113pro/227_1113pro.yaml" \
+  --lio --lio-frontend zlio --zloc-backend \
+  --zloc-prior --zloc-loop --zloc-uwb \
+  --zloc-map "$HOME/srm_nav_27_data/zlocalization/map_bundles/227_1113pro"
+```
+
+`--zloc-config /absolute/path/to/site.yaml` 可选，用于传入现场 UWB 配置；支持 YAML `extends`。
+导航入口的三个开关始终覆盖 YAML 中的 `enabled`，因此即使 YAML 写 true，省略开关仍关闭。
+直接启动 `backend.launch.py` 则支持 `prior_enabled`、`loop_enabled`、`uwb_enabled`，默认 `config`
+表示沿用显式 YAML / 旧 `mode` 设置；发布的 YAML 中三项默认均为 false。
+
+先验恢复/跟踪仅访问不可变先验库，回环仅访问当前运行轨迹库，两路约束进入同一个后端图。
+回环打开后自动令 `graph.fixed_lag_seconds=0` 并保留运行关键帧，内存随轨迹增长；
+关闭回环时，先验模式仍使用有界图窗口和最新运行锚。不会新增第二个 `map→odom` 发布者。
+
+UWB 开关只启用接入与融合；话题、`frame_id`、坐标对齐、天线杆臂、时间偏置仍须按实际硬件配置。
+迁入的数值不是本车已标定结果。当前 UWB 因子使用固定传感器—天线杆臂；若天线在底盘、
+LiDAR/IMU 在旋转云台上，必须核对动态几何，不能仅打开开关就认为云台转动已被补偿。
+无先验时在线 UWB 坐标对齐/时间标定会关闭，使用配置的固定对齐；UWB-only 启动还需有可观测运动。
 
 构建与测试：
 
 ```bash
-source ~/.local/gtsam-4.2.0/env.sh
+source scripts/setup/env_srm27.sh     # 含 GTSAM_DIR；GTSAM 未装也能 source，只是 backend 构建会失败
 colcon build --packages-select srm27_zlocalization_backend
 colcon test  --packages-select srm27_zlocalization_backend && colcon test-result --verbose
 ```
@@ -191,7 +224,11 @@ ZLIO 点云位于传感器坐标系，时间戳须与同一消息内的里程计
 | `/clicked_point` | `geometry_msgs/msg/PointStamped` | RViz 的选点工具发布 |
 | `/clock` | `rosgraph_msgs/msg/Clock` | 使用仿真时间时订阅 |
 | `/parameter_events` | `rcl_interfaces/msg/ParameterEvent` | ROS 参数事件 |
-| `/rosout` | `rcl_interfaces/msg/Log` | 节点日志 |
+| `/rosout` | `rcl_interfaces/msg/Log` | 节点日志；运行期领域层日志（修正/回环等）走节点 logger，也会出现在这里 |
+
+> 启动期的配置覆盖日志（`configuration override: ...`）在 logger 安装前打印，只走 stdout；
+> 运行期的 `global correction committed` / `loop scan-to-map accepted` 等经节点 logger 进
+> `/rosout`，供 `debug_tools/plot_backend_correction.py` 等诊断工具解析。
 
 标定结果会在终端显示，并给出可填入 YAML 的配置片段。
 
@@ -247,6 +284,12 @@ ros2 run srm27_zlocalization_backend srm27_zlocalization_backend_build_pcd_map_b
 
 先验地图须使用关键帧地图包，包含 `keyframes.txt`、`clouds/` 和所选描述子的数据文件。
 `map.pcd` 是可选的全局显示点云。各工具选项见[参数文档](docs/parameters.md#离线工具参数)。
+
+> ⚠ 建包参数必须与 `config/backend.yaml` 的 `common.scan_context.*` **逐位一致**：
+> `--sc-lidar-height`（不显式给时等于 `--sensor-z`，默认 0.3464）要对上
+> `lidar_height`，`--sc-rings/--sc-sectors/--sc-max-radius/--sc-downsample/--sc-augment-count`
+> 同理。不一致时 backend 启动就是 `FATAL: failed to load Scan Context descriptors`
+> （`storage.cpp` 按 1e-6 比较几何配置），用相同参数重建地图包即可。
 
 ## 许可证
 

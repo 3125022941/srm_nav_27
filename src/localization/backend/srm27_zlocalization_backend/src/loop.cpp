@@ -266,7 +266,7 @@ std::optional<LoopWork> Localization::captureLoop() {
         return std::nullopt;
     }
     const auto trajectory_revision = trajectory_.revision();
-    const auto descriptor_revision = descriptor_.revision();
+    const auto descriptor_revision = trajectory_descriptor_.revision();
     if (descriptor_revision != 0 && empty_loop_ && work.latest.index == empty_loop_->index &&
         trajectory_revision == empty_loop_->trajectory_revision &&
         descriptor_revision == empty_loop_->descriptor_revision)
@@ -286,12 +286,12 @@ std::optional<LoopWork> Localization::captureLoop() {
                 allowed.push_back(candidate.index);
             }
         }
-        work.candidates = descriptor_.detectLatestCandidatesWithin(allowed);
+        work.candidates = trajectory_descriptor_.detectLatestCandidatesWithin(allowed);
     } else {
-        work.candidates = descriptor_.detectLatestCandidates();
+        work.candidates = trajectory_descriptor_.detectLatestCandidates();
     }
     // 描述子仍会由同步帧线程增长；同锁冻结其姿态语义，工作线程不再访问可变对象。
-    work.descriptor_level_with_odom_roll_pitch = descriptor_.levelWithOdomRollPitch();
+    work.descriptor_level_with_odom_roll_pitch = trajectory_descriptor_.levelWithOdomRollPitch();
     work.accepted_loops = accepted_loops_;
     // 只有真实候选批次才消费该关键帧；冷却或无候选不会造成永久跳过。
     if (!work.candidates.empty()) {

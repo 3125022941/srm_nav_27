@@ -100,6 +100,9 @@ def generate_launch_description():
     effective_backend_config = PythonExpression(
         ["'", zlocalization_backend_config, "' or '", default_backend_config, "'"]
     )
+    zlocalization_prior_enabled = LaunchConfiguration("zlocalization_prior_enabled")
+    zlocalization_loop_enabled = LaunchConfiguration("zlocalization_loop_enabled")
+    zlocalization_uwb_enabled = LaunchConfiguration("zlocalization_uwb_enabled")
     zlocalization_prior_map = LaunchConfiguration("zlocalization_prior_map")
     zlocalization_trajectory_directory = LaunchConfiguration("zlocalization_trajectory_directory")
 
@@ -198,7 +201,7 @@ def generate_launch_description():
         default_value="False",
         description=(
             "用 srm27_zlocalization_backend 发布 map->odom（实验模式，默认关闭）。"
-            "要求 use_lio_odometry:=True + odometry_frontend:=zlio + 先验地图包；"
+            "要求 use_lio_odometry:=True + odometry_frontend:=zlio；先验/回环/UWB 独立选择；"
             "与 use_pcd_localization / 静态 map->odom / slam 互斥"
         ),
     )
@@ -209,6 +212,18 @@ def generate_launch_description():
             "backend 算法配置（继承包内 backend.yaml；"
             "实车入口默认 srm27_localization_real.yaml，仿真用 sim 那份）"
         ),
+    )
+    declare_zlocalization_prior_enabled_cmd = DeclareLaunchArgument(
+        "zlocalization_prior_enabled", default_value="False",
+        description="启用先验配准，独立开关，默认关闭",
+    )
+    declare_zlocalization_loop_enabled_cmd = DeclareLaunchArgument(
+        "zlocalization_loop_enabled", default_value="False",
+        description="启用运行轨迹回环，独立开关，默认关闭",
+    )
+    declare_zlocalization_uwb_enabled_cmd = DeclareLaunchArgument(
+        "zlocalization_uwb_enabled", default_value="False",
+        description="启用UWB 融合，独立开关，默认关闭",
     )
     declare_zlocalization_prior_map_cmd = DeclareLaunchArgument(
         "zlocalization_prior_map",
@@ -524,7 +539,9 @@ def generate_launch_description():
             condition=IfCondition(use_zlocalization_backend),
             launch_arguments={
                 "config_file": effective_backend_config,
-                "mode": "localization",
+                "prior_enabled": zlocalization_prior_enabled,
+                "loop_enabled": zlocalization_loop_enabled,
+                "uwb_enabled": zlocalization_uwb_enabled,
                 "prior_map": zlocalization_prior_map,
                 "trajectory_directory": zlocalization_trajectory_directory,
                 # backend 的 odom 就是本仓库 odom（与 zlio_bridge 的 odom_frame 一致）。
@@ -567,14 +584,14 @@ def generate_launch_description():
         elif not os.path.isfile(config_file):
             problems.append(f"backend 配置不存在: {config_file}")
         prior_map = str(context.launch_configurations.get("zlocalization_prior_map", "")).strip()
-        if not prior_map:
-            problems.append("zlocalization_prior_map 为空（backend 定位模式需要先验地图包）")
-        elif not os.path.isabs(prior_map):
+        if flag("zlocalization_prior_enabled") and not prior_map:
+            problems.append("zlocalization_prior_map 为空（启用先验配准需要先验地图包）")
+        elif prior_map and not os.path.isabs(prior_map):
             problems.append(f"zlocalization_prior_map={prior_map} 不是绝对路径")
         if problems:
             raise RuntimeError(
                 "use_zlocalization_backend:=True 需要: use_lio_odometry:=True + "
-                "odometry_frontend:=zlio + 绝对路径的先验地图包；"
+                "odometry_frontend:=zlio（启用先验时还需绝对路径的地图包）；"
                 "且不能与 GICP/静态 TF/slam 同时启用 map->odom。冲突项: "
                 + "; ".join(problems)
             )
@@ -615,6 +632,9 @@ def generate_launch_description():
     ld.add_action(declare_map_to_odom_yaw_cmd)
     ld.add_action(declare_use_zlocalization_backend_cmd)
     ld.add_action(declare_zlocalization_backend_config_cmd)
+    ld.add_action(declare_zlocalization_prior_enabled_cmd)
+    ld.add_action(declare_zlocalization_loop_enabled_cmd)
+    ld.add_action(declare_zlocalization_uwb_enabled_cmd)
     ld.add_action(declare_zlocalization_prior_map_cmd)
     ld.add_action(declare_zlocalization_trajectory_directory_cmd)
 

@@ -40,12 +40,14 @@ public:
 class Localization {
 public:
     /// 按描述子能力解析请求配置，并绑定地图及外部端口。
-    Localization(KeyframeMap& trajectory, KeyframeMap& prior_map, PlaceDescriptor& descriptor,
+    Localization(KeyframeMap& trajectory, KeyframeMap& prior_map, PlaceDescriptor& prior_descriptor,
+                 PlaceDescriptor& trajectory_descriptor,
                  Config requested_config, SteadyClockPort& clock, FrontendResetPort& reset_port,
                  StateSink& state_sink, VisualizationSink& visualization_sink);
 
     /// 使用已解析的有效配置绑定地图、图估计及外部端口。
-    Localization(KeyframeMap& trajectory, KeyframeMap& prior_map, PlaceDescriptor& descriptor,
+    Localization(KeyframeMap& trajectory, KeyframeMap& prior_map, PlaceDescriptor& prior_descriptor,
+                 PlaceDescriptor& trajectory_descriptor,
                  EffectiveConfig effective_config, SteadyClockPort& clock,
                  FrontendResetPort& reset_port, StateSink& state_sink,
                  VisualizationSink& visualization_sink);
@@ -293,7 +295,9 @@ private:
     bool tryCommitUwbBootstrapLocked(const FrontendFrame& frame);
     KeyframeMap& trajectory_;
     KeyframeMap& prior_map_;
-    PlaceDescriptor& descriptor_;
+    // 先验检索库只读；运行回环库随轨迹增长、优化和故障隔离单独维护。
+    PlaceDescriptor& prior_descriptor_;
+    PlaceDescriptor& trajectory_descriptor_;
     Config config_;
     SteadyClockPort& clock_;
     FrontendResetPort& reset_port_;
