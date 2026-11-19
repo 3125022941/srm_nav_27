@@ -339,6 +339,7 @@ bool MincoMpcController::loadParameters(std::string * _reason)
   declare("safety.clearance_margin", 0.05);
   declare("safety.unknown_is_obstacle", true);
   declare("safety.braking_deceleration", 0.0);
+  declare("safety.narrow_linear_speed", 0.0);
   // 有效反应延迟（s）。<=0 表示退化为使用 state_timeout。
   declare("safety.reaction_latency", 0.0);
 
@@ -460,6 +461,7 @@ bool MincoMpcController::loadParameters(std::string * _reason)
   node->get_parameter(name + ".safety.clearance_margin", minco_config_.clearance_margin);
   node->get_parameter(name + ".safety.unknown_is_obstacle", esdf_config_.unknown_is_seed);
   node->get_parameter(name + ".safety.braking_deceleration", braking_deceleration_);
+  node->get_parameter(name + ".safety.narrow_linear_speed", narrow_linear_speed_);
   node->get_parameter(name + ".safety.reaction_latency", reaction_latency_);
 
   node->get_parameter(name + ".state.max_sample_gap", state_max_sample_gap_);
@@ -546,6 +548,9 @@ bool MincoMpcController::loadParameters(std::string * _reason)
   if (!std::isfinite(braking_deceleration_) || braking_deceleration_ < 0.0) {
     return fail(
       "safety.braking_deceleration must be non-negative (0 = use limits.max_linear_accel)");
+  }
+  if (!std::isfinite(narrow_linear_speed_) || narrow_linear_speed_ < 0.0) {
+    return fail("safety.narrow_linear_speed must be non-negative (0 = disabled)");
   }
   if (!std::isfinite(reaction_latency_) || reaction_latency_ < 0.0) {
     return fail("safety.reaction_latency must be non-negative (0 = use state_timeout)");
@@ -1431,7 +1436,8 @@ void MincoMpcController::publishRecoveryDebug(
 }
 
 void MincoMpcController::requestReplan(
-  const State2D & _state, double _now_stamp, double _now_steady)
+  const State2D & _state, const PlanarCommandLimits & _planar,
+  double _now_stamp, double _now_steady)
 {
   srm27_minco_core::ReplanRequest request;
   request.versions.goal_epoch = goal_epoch_;
@@ -1467,14 +1473,11 @@ void MincoMpcController::requestReplan(
   planning_request.path = planning_path_;
   planning_request.state = _state;
   planning_request.limits = limits_;
-  const auto planar = rotatingFrameLimits(
-    limits_.max_linear_speed, limits_.max_linear_accel,
-    command_frame_mode_ == CommandFrameMode::kOdomAlignedFake ? _state.omega : 0.0);
   // The local trajectory must match the executable speed. Keep the measured
-  // entry speed feasible while the controller decelerates after a spin-up.
+  // entry speed feasible while the controller decelerates into a lower limit.
   planning_request.limits.max_linear_speed = std::max(
-    planar.speed, std::min(limits_.max_linear_speed, _state.velocity.norm()));
-  planning_request.limits.max_linear_accel = planar.accel;
+    _planar.speed, std::min(limits_.max_linear_speed, _state.velocity.norm()));
+  planning_request.limits.max_linear_accel = _planar.accel;
   planning_request.minco_config = minco_config_;
   planning_request.initializer_config = initializer_config_;
   // 本插件持有的路径是 Nav2 下发的全局路径，其末点即当前 FollowPath 任务的目标。
@@ -1485,7 +1488,7 @@ void MincoMpcController::requestReplan(
   planning_request.validity_window = trajectory_max_age_;
   planning_request.validator_config = makeValidatorConfig();
   planning_request.validator_config.braking_deceleration = std::min(
-    planning_request.validator_config.braking_deceleration, planar.accel);
+    planning_request.validator_config.braking_deceleration, _planar.accel);
   planning_request.terminal_reached_radius = terminal_reached_radius_;
   // 距离场以只读快照交给工作线程；工作线程不持有 costmap 锁。
   planning_request.esdf = std::const_pointer_cast<const srm27_minco_core::Esdf2D>(esdf_);
@@ -1773,16 +1776,29 @@ geometry_msgs::msg::TwistStamped MincoMpcController::computeVelocityCommands(
   if (diagnostics_.map_age > map_timeout_) {
     return fail("distance field is older than map_timeout");
   }
-  if (spin_inhibit_pub_) {
-    const auto & safety = validator_.config();
-    const double spin_brake_time = base_limits_.max_angular_accel > 0.0 ?
+  // 云台系快速旋转时，给坐标旋转和世界系转向分别留出串口加速度预算。
+  auto planar = rotatingFrameLimits(
+    limits_.max_linear_speed, limits_.max_linear_accel,
+    command_frame_mode_ == CommandFrameMode::kOdomAlignedFake ? state.omega : 0.0);
+  const auto & safety = validator_.config();
+  const double brake_deceleration = std::min(safety.braking_deceleration, planar.accel);
+  const double reaction_time = safety.reaction_latency + diagnostics_.state_age;
+  const double required_clearance = safety.robot_radius + safety.clearance_margin;
+  const bool narrow_speed_enabled = narrow_linear_speed_ > 0.0 && narrow_linear_speed_ < planar.speed;
+  if (spin_inhibit_pub_ || narrow_speed_enabled) {
+    const double spin_brake_time = spin_inhibit_pub_ ?
       base_limits_.max_angular_speed / base_limits_.max_angular_accel : 0.0;
-    if (shouldInhibitSpin(
-        *esdf_, measured_position, state.velocity,
-        spin_brake_time + safety.reaction_latency + diagnostics_.state_age,
-        std::max(yaw_narrow_clearance_threshold_, safety.robot_radius + safety.clearance_margin)))
-    {
+    const double linear_brake_time = narrow_speed_enabled ?
+      std::max(0.0, state.velocity.norm() - narrow_linear_speed_) / brake_deceleration : 0.0;
+    const bool approaching_narrow_space = shouldInhibitSpin(
+      *esdf_, measured_position, state.velocity,
+      std::max(spin_brake_time, linear_brake_time) + reaction_time,
+      std::max(yaw_narrow_clearance_threshold_, required_clearance));
+    if (approaching_narrow_space) {
       inhibitSpin();
+      if (narrow_speed_enabled) {
+        planar.speed = narrow_linear_speed_;
+      }
     }
   }
 
@@ -1837,7 +1853,7 @@ geometry_msgs::msg::TwistStamped MincoMpcController::computeVelocityCommands(
   }
 
   // 7) 重规划请求。
-  requestReplan(state, now_stamp, control_begin);
+  requestReplan(state, planar, now_stamp, control_begin);
 
   // 8) 终点停车必须使用 Nav2 实测位姿，与目标检查器的成功区域一致。
   // MPC 使用的 state 已按延迟外推，不能用它提前锁停；滞回也不能把车锁在
@@ -2005,10 +2021,6 @@ geometry_msgs::msg::TwistStamped MincoMpcController::computeVelocityCommands(
   }
 
   // 13) 输出前检查：合速度、自转与相对上一条命令的变化量。
-  // 云台系快速旋转时，给坐标旋转和世界系转向分别留出串口加速度预算。
-  const auto planar = rotatingFrameLimits(
-    limits_.max_linear_speed, limits_.max_linear_accel,
-    command_frame_mode_ == CommandFrameMode::kOdomAlignedFake ? state.omega : 0.0);
   diagnostics_.applied_speed_scale = 1.0;
   const double speed = velocity_command.norm();
   if (speed > planar.speed) {
@@ -2040,12 +2052,9 @@ geometry_msgs::msg::TwistStamped MincoMpcController::computeVelocityCommands(
   if (!execution_clearance.valid) {
     return fail("execution clearance unavailable");
   }
-  const auto & safety = validator_.config();
   const Eigen::Vector2d guarded_velocity = limitExecutionVelocity(
     *esdf_, measured_position, velocity_odom, state.velocity,
-    safety.robot_radius + safety.clearance_margin,
-    std::min(safety.braking_deceleration, planar.accel),
-    safety.reaction_latency + diagnostics_.state_age);
+    required_clearance, brake_deceleration, reaction_time);
   const bool clearance_limited = (guarded_velocity - velocity_odom).norm() > 1.0e-6;
   if (clearance_limited) {
     velocity_odom = guarded_velocity;
@@ -2053,7 +2062,7 @@ geometry_msgs::msg::TwistStamped MincoMpcController::computeVelocityCommands(
     RCLCPP_INFO_THROTTLE(
       node->get_logger(), *node->get_clock(), 2000,
       "MincoMpcController: 执行净空约束生效 (净空 %.3f m，要求 %.3f m，平移 %.3f m/s)",
-      execution_clearance.distance, safety.robot_radius + safety.clearance_margin,
+      execution_clearance.distance, required_clearance,
       velocity_odom.norm());
   }
   // Store the velocity that is really emitted, including clearance filtering.
