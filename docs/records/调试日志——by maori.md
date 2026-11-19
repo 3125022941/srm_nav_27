@@ -579,5 +579,45 @@ ros2 launch srm27_nav_protocol srm27_nav_protocol.launch.py
 ./debug_tools/plot_backend_correction.py
 
 # 保存数据
-./debug_tools/plot_backend_correction.py --duration 120 --headless --save /user_log/pic.png
+./debug_tools/plot_backend_correction.py --save all.png
+```
+### z-loc 后端脚本参数
+```bash
+# 先验，回环，UWB全开
+./scripts/bringup/start_real_nav.sh \
+  -m "$PWD/maps/227_1113pro/227_1113pro.yaml" \
+  --lio --lio-frontend zlio \
+  --zloc-backend \
+  --zloc-prior --zloc-loop --zloc-uwb \
+  --zloc-map "$HOME/srm_nav_27_data/zlocalization/map_bundles/227_1113pro" 
+
+# 只开先验
+./scripts/bringup/start_real_nav.sh \
+  -m "$PWD/maps/227_1113pro/227_1113pro.yaml" \
+  --lio --lio-frontend zlio --zloc-backend \
+  --zloc-prior \
+  --zloc-map "$HOME/srm_nav_27_data/zlocalization/map_bundles/227_1113pro"
+
+# 只开回环
+./scripts/bringup/start_real_nav.sh \
+  -m "$PWD/maps/227_1113pro/227_1113pro.yaml" \
+  --lio --lio-frontend zlio --zloc-backend \
+  --zloc-loop
+
+
+# 只开先验+回环
+./scripts/bringup/start_real_nav.sh \
+  -m "$PWD/maps/227_1113pro/227_1113pro.yaml" \
+  --lio --lio-frontend zlio --zloc-backend \
+  --zloc-prior --zloc-loop \
+  --zloc-map "$HOME/srm_nav_27_data/zlocalization/map_bundles/227_1113pro"
+
+# 三后端全开+变速小陀螺
+./scripts/bringup/start_real_nav.sh \
+  -m "$PWD/maps/227_1113pro/227_1113pro.yaml" \
+  --lio --lio-frontend zlio \
+  --zloc-backend \
+  --zloc-prior --zloc-loop --zloc-uwb \
+  --zloc-map "$HOME/srm_nav_27_data/zlocalization/map_bundles/227_1113pro" \
+  --chassis-spin-sine --spin-max 9  --spin-min 5 --spin-period 1.5
 ```

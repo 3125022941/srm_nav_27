@@ -994,6 +994,11 @@ if [ "$ZLOC_ON" = "1" ]; then
       _zloc_problems+=("--zloc-map 不是地图包（缺 keyframes.txt）: $ZLOC_MAP")
     fi
   fi
+  # --zloc-map 只提供路径；没开 --zloc-prior 时它不生效。放在这里提示，避免
+  # "命令行里明明写了地图包" 却按无先验跑（只开回环时最容易踩）。
+  if [ -n "$ZLOC_MAP" ] && [ "$ZLOC_PRIOR" != "1" ]; then
+    echo "[提示] 给了 --zloc-map 但没开 --zloc-prior: 先验配准不会启用（--zloc-map 只给路径）。" >&2
+  fi
   case "$ZLOC_MAP" in
     /*) ;;
     "") ;;

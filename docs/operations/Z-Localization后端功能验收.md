@@ -117,7 +117,14 @@ ros2 run tf2_ros tf2_echo odom gimbal_yaw
 ```
 
 面板③给出每次修正的日志报告值，面板④给出同一事件在 `/tf` 上实测的前→后箭头；详细判读见
-[debug_tools/README.md](../../debug_tools/README.md) §4。本节命令只指定 `--zloc-prior`，
+[debug_tools/README.md](../../debug_tools/README.md) §4。跑完后看各来源（先验/UWB/回环/恢复）
+的净贡献与总效果：
+
+```bash
+./debug_tools/backend_contribution_report.py --stats-only
+```
+
+本节命令只指定 `--zloc-prior`，
 回环和 UWB 因未指定开关而关闭；要同开请添加 `--zloc-loop --zloc-uwb`。
 没有回环事件不能反推回环已关闭；检查启动能力日志、轨迹重访与几何门控。
 联合日志 `sources=prior_scan_to_map+uwb` 的修正量属于联合事务，不可拆成两个独立贡献。

@@ -9,9 +9,10 @@
 | `plot_vxvywz.py` | 底盘 vx/vy/wz 波形 + 云台偏角/关节角行（共 8 条曲线） | 可用（对接 `/chassis_speed`、`/chassis_to_gimbal_yaw_deg`、`/gimbal_joint_angle`） |
 | `plot_lio_gt_yaw.py` | **LIO 算的车头朝向 vs Gazebo 真值**：yaw 曲线 + 误差 + x-y 轨迹 + 速度符号（共 5 个面板）；加 `--zlio` 再多 3 个面板看里程计前端换成 ZLIO 之后的效果 | 可用 |
 | `plot_backend_correction.py` | **backend 的 map→odom 纠正监视**：先验配准 / 回环各自改了多少、改到哪；4 个面板 + CSV | 可用（对接 `/tf`、`/localization/odometry`、`~/localization_state`、`/rosout`） |
+| `backend_contribution_report.py` | **先验 / UWB / 回环 / 恢复 / 未归属 / 总计的贡献分解**：累计绝对修正 vs 净效果；读前一个工具的 CSV | 可用 |
 | `system_monitor.py` | 本机占用：CPU/内存/swap/温度/磁盘/网络 + **导航栈分组统计** + 最吃 CPU 的进程 | 可用 |
 
-`plot_vxvywz.py`、`plot_backend_correction.py` 与 `system_monitor.py` 共用 `_common.py`
+`plot_vxvywz.py`、`plot_backend_correction.py`、`backend_contribution_report.py` 与 `system_monitor.py` 共用 `_common.py`
 （matplotlib 配置目录、中文字体、CSV 落盘、`-h` 输出），改公共行为只改那一处；
 `plot_lio_gt_yaw.py` 是后加的，自带一份同样的样板，没依赖 `_common.py`。
 
@@ -565,7 +566,83 @@ source install/setup.bash
 - **3D vs 2D**：backend 的 `map→odom` 是 4×4，工具原样画 roll/pitch；Nav2 侧会投影，
   所以①②里看到小角度 roll/pitch 不代表导航链有问题，但持续增大要查外参。
 
-### 4.6 限制
+### 4.6 贡献分解：先验 / UWB / 回环 / 恢复 / 总效果
+
+主工具回答“哪次修正、什么来源”；这个报告回答**每个来源一共贡献了多少，以及总效果是多少**。
+它不连 ROS，直接读主工具落盘的 `<name>_samples.csv` / `<name>_events.csv`：
+
+```bash
+# 默认找 user_log/ 下最新的 *_samples.csv
+./debug_tools/backend_contribution_report.py
+
+# 指定某次录制
+./debug_tools/backend_contribution_report.py \
+  --samples user_log/pic_samples.csv \
+  --events  user_log/pic_events.csv
+
+# 只打印表，不出图
+./debug_tools/backend_contribution_report.py --stats-only
+```
+
+**分别看三个部分**：三项开关已经独立，建议按单开关各跑一次，每次用不同 `--save` 名，报告自然只在该来源行有数据：
+
+```bash
+# 1) 先验 only
+./scripts/bringup/start_real_nav.sh --lio --lio-frontend zlio \
+  --zloc-backend --zloc-prior --zloc-map /abs/map_bundle
+
+# 2) 回环 only（无先验图；运行轨迹重访时才有 loop 事件）
+./scripts/bringup/start_real_nav.sh --lio --lio-frontend zlio \
+  --zloc-backend --zloc-loop
+
+# 3) UWB only（需要真实 UWB + 现场标定 YAML；没有硬件时报告会是 0/未接入）
+./scripts/bringup/start_real_nav.sh --lio --lio-frontend zlio \
+  --zloc-backend --zloc-uwb --zloc-config /abs/uwb.yaml
+
+# 4) 三个全开（总效果）
+./scripts/bringup/start_real_nav.sh --lio --lio-frontend zlio \
+  --zloc-backend --zloc-prior --zloc-loop --zloc-uwb \
+  --zloc-map /abs/map_bundle --zloc-config /abs/uwb.yaml
+
+# 每次跑完后（默认找最新 CSV；也可显式给 --samples/--events）
+./debug_tools/backend_contribution_report.py --stats-only
+```
+
+- 单开关运行的 `net` 就是该来源的净贡献；`Σ|Δp|` 是活动量。
+- 三个全开时，如果一次 `global correction committed` 同时含 `sources=prior_scan_to_map+uwb`，
+  日志只有一个联合 `delta_t`，报告归到 `prior_uwb`（联合），**无法从日志拆成两项**；
+  要拆开就在同一份数据上分别看单开关运行，或给 backend 增加逐因子贡献输出。
+- UWB 与回环当前都默认关闭；UWB 没接硬件时不要用 `--zloc-uwb` 判断算法效果。
+
+![backend 贡献分解示例](example_backend_contribution.png)
+
+本次数据（93 s，含自转）的输出：
+
+| 来源 | 台阶数 | Σ\|Δp\| | net Δx | net Δy | net Δyaw | max |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 先验配准 | 113 | 1.400 m | +0.285 m | -0.015 m | +0.364° | 0.174 m |
+| UWB | 0 | — | — | — | — | 未接入 |
+| 回环检测 | 0 | — | — | — | — | 未加 `--zloc-loop` / 未闭合 |
+| 恢复/其它 | 2 | 0.779 m | -0.261 m | +0.041 m | -0.250° | 0.390 m |
+| 未归属台阶 | 6 | 0.010 m | -0.002 m | -0.004 m | -0.033° | 0.004 m |
+| **总计（map→odom 首末）** | 121 | **2.189 m** | **+0.022 m** | **+0.022 m** | **+0.081°** | — |
+
+表里要同时看两列：
+
+- **Σ|Δp|**：累计绝对修正量（所有台阶长度相加），反映“修正活动量”；
+- **net Δx/Δy/Δyaw**：各来源认领的 map→odom 台阶增量向量和，反映“净贡献”。
+
+上表的重点：**净效果只有 +2.2 cm / +2.2 cm / 0.08°，但累计绝对修正 2.19 m**。先验的 +0.285 m 与恢复的 -0.261 m 在 x 方向几乎抵消；所以“首末变化很小”绝不等于“没有修正”。报告末尾会打印残差（总效果 − 各来源向量和，正常应接近 0）。
+
+口径与边界：
+
+- baseline 是第一条 `map→odom`；**启动重定位在首条 TF 之前，没有 before 基线，不计入增量**，表下会单独列出（本次 `0.637 m / 38.58°`）。
+- UWB 未接入时显示 0 是预期；回环由 `--zloc-loop` 独立控制（可与先验/UWB 同开），未加开关时 0 也是预期。要测回环请加 `--zloc-loop`，并让轨迹实际重访；有 backend 日志时加 `--backend-log` 可确认是 disabled 还是 enabled 但未闭合。
+- 如果 UWB 行显示 **“启用，0 次（未收到有效 UWB 观测）”**，说明 `--zloc-uwb` 开了但 `/uwb_pose` 没进来（或全部被拒），不能据此评价 UWB 算法效果；先查 UWB 话题、frame、天线杆臂和时间偏置。
+- 如果 backend 同时接受先验+UWB，日志只有一条联合 `delta_t`，报告会归到 `prior_uwb`（联合），**无法从日志拆成两项**；要拆需要 backend 额外输出每类因子的贡献。
+- 输出：`<stem>_contributions.png`、`<stem>_contributions.csv`（默认与 samples 同目录）。
+
+### 4.7 限制
 
 - 依赖 backend 的 INFO 日志文案。只认三种固定提交日志（`loop scan-to-map accepted:`、
   `global correction committed:`、带 `delta_t` 的 `localization state ->`），**不做模糊匹配**：

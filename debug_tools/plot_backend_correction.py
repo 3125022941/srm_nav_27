@@ -337,6 +337,9 @@ class EventEffect:
     step_t: float
     step_gap: float
     step_index: int = -1
+    # 台阶对 map→odom 本身的增量（不是机器人位置上的位移）。分解用。
+    map_dx: float = 0.0
+    map_dy: float = 0.0
 
 
 @dataclass
@@ -598,6 +601,8 @@ class TfStep:
 
     index: int
     t: float
+    start_t: float
+    end_t: float
     dxy_origin: float
     dyaw_deg: float
     gap: float
@@ -617,6 +622,7 @@ def build_tf_steps(recording: Recording) -> list[TfStep]:
         if score <= 1e-6:
             continue
         steps.append(TfStep(index=index, t=0.5 * (first.t + second.t),
+                            start_t=first.t, end_t=second.t,
                             dxy_origin=dxy, dyaw_deg=dyaw, gap=gap))
     return steps
 
@@ -637,6 +643,7 @@ def effect_for_step(recording: Recording, event: CorrectionEvent,
         dxy = step.dxy_origin
         before_xy = (first.x, first.y)
         after_xy = (second.x, second.y)
+    delta = second.T @ np.linalg.inv(first.T)
     return EventEffect(
         dxy=dxy,
         dyaw_deg=step.dyaw_deg,
@@ -645,6 +652,8 @@ def effect_for_step(recording: Recording, event: CorrectionEvent,
         step_t=step.t,
         step_gap=step.gap,
         step_index=step.index,
+        map_dx=float(delta[0, 3]),
+        map_dy=float(delta[1, 3]),
     )
 
 
@@ -667,11 +676,15 @@ def analyze_effects(recording: Recording) -> None:
     if not steps or not recording.events:
         recording.assigned_steps = set()
         return
-    step_times = [step.t for step in steps]
+    # 用台阶的“区间”而不是中点匹配：TF 偶尔有 0.5 s 的传输空档，
+    # 一次 0.17 m 的修正在样本上会表现为 85.14->85.65 的长台阶，
+    # 中点 85.39 会落在事件 t=85.65 的 0.25 s 窗口外，导致漏归属。
+    step_starts = [step.start_t for step in steps]
+    step_ends = [step.end_t for step in steps]
     candidates = []
     for event_index, event in enumerate(recording.events):
-        lo = bisect.bisect_left(step_times, event.t - before)
-        hi = bisect.bisect_right(step_times, event.t + after)
+        lo = bisect.bisect_left(step_ends, event.t - before)
+        hi = bisect.bisect_right(step_starts, event.t + after)
         for step_index in range(lo, hi):
             step = steps[step_index]
             # 事件之前必须已经有 TF 样本作为基线。启动时的恢复/初始化事件
@@ -680,9 +693,16 @@ def analyze_effects(recording: Recording) -> None:
             if recording.samples[step.index].t > event.t + 0.02:
                 continue
             effect = effect_for_step(recording, event, step)
+            # 事件落在台阶区间内时间差为 0；否则取到区间端点的距离。
+            if event.t < step.start_t:
+                time_delta = step.start_t - event.t
+            elif event.t > step.end_t:
+                time_delta = event.t - step.end_t
+            else:
+                time_delta = 0.0
             # 平移量级权重 5.0：同一次 transaction 里回环的大台阶和小先验台阶
             # 可能只差几十毫秒，若时间权重压过量级，回环的大台阶会被先验认领。
-            cost = (2.0 * abs(step.t - event.t)
+            cost = (2.0 * time_delta
                     + 5.0 * abs(effect.dxy - event.delta_t)
                     + 0.02 * abs(abs(effect.dyaw_deg) - abs(event.delta_r_deg)))
             candidates.append((cost, event_index, step_index, effect))
@@ -1700,6 +1720,11 @@ def main(argv: Optional[list[str]] = None) -> int:
             print("  图  : %s" % png_path)
         else:
             print("  图  : 未写出（权限/磁盘），目标 %s" % png_path)
+    if samples_ok:
+        print("")
+        print("按来源分解（先验/UWB/回环/恢复/总效果）：")
+        print("  ./debug_tools/backend_contribution_report.py --samples %s"
+              % samples_csv)
     return 0
 
 
