@@ -71,7 +71,17 @@ echo /usr/local/lib | sudo tee /etc/ld.so.conf.d/usr-local.conf && sudo ldconfig
 `package.xml` 里只声明了 `<depend>osqp_vendor</depend>`；OsqpEigen 没有 rosdep key，
 无法在其中声明，CMake 用 `find_package(OsqpEigen REQUIRED)` 直接找。
 
-## 启动
+## 启动与配置
+
+- **实车**。`start_real_nav.sh --tdt-planner` 把 `GridBased` 全局规划器从 Theta* 切换为 YAstar，
+  局部轨迹和跟踪继续由 MINCO/MPC 执行。Theta* 是默认项。低速首轮使用
+  `speed_limits_tdt_first_run.yaml` 的 **0.40 m/s** 平移上限，加 `--no-chassis-spin` 关闭自转。
+  [低速实车预检](#实车首次联调) · [实车切换实现](../srm27_navigation/srm27_nav_bringup/launch/nav_srm_real_launch.py)
+- **场地仿真**。`227_1116_remap` 的配置在 `ComputePathToPose` 和 `FollowPath` 之间加入
+  `SmoothPath`，运行顺序为 YAstar → TDT 平滑器 → MINCO/MPC。
+  [场地仿真启动与往返验证](../../maps/227_1116_remap/simulation/field_validation/README.md)
+
+### RMUC 2025 演示
 
 ```bash
 # 默认启动 RMUC 2025、YAstar 和 MinimumSnap
