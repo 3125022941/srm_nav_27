@@ -112,6 +112,23 @@ TEST(PlannerGeometry, ReplanKeepsResolvedGoalWhenCloserCellsBecomeFree)
   EXPECT_EQ(*goal.resolve(m, center(m, 6, 5), .2f), center(m, 6, 5));
 }
 
+TEST(PlannerGeometry, ExactGoalRejectsBlockedCellAndPreservesRequestedCoordinates)
+{
+  auto m = map();
+  const Point requested = center(m, 5, 5) + Point(.004f, .003f);
+  tdt_nav_kit::StableGoal goal;
+  m.data[5 * m.size_x + 5] = 1;
+  EXPECT_FALSE(goal.resolve(m, requested, 0.0f));
+
+  m.data[5 * m.size_x + 5] = 0;
+  const auto resolved = goal.resolve(m, requested, 0.0f);
+  ASSERT_TRUE(resolved);
+  EXPECT_EQ(*resolved, requested);
+
+  m.data[5 * m.size_x + 5] = 1;
+  EXPECT_FALSE(goal.resolve(m, requested, 0.0f));
+}
+
 TEST(PlannerGeometry, BlockedResolvedGoalFailsInsteadOfJumpingToAnotherCell)
 {
   auto m = map();

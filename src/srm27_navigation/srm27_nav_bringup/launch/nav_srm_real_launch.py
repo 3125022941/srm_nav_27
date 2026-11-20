@@ -291,6 +291,7 @@ class RealNavParams(RewrittenYaml):
             "occupancy_threshold": 252,
             "treat_unknown_as_obstacle": True,
             "save_point_max_radius": 0.4,
+            "goal_snap_max_radius": 0.0,
             "path_resample_step": 0.20,
         }
         with open(path, "w", encoding="utf-8") as stream:

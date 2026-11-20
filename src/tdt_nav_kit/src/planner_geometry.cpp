@@ -130,6 +130,9 @@ std::optional<Eigen::Vector2f> nearestFreePoint(
 std::optional<Eigen::Vector2f> StableGoal::resolve(
   const CostmapSnapshot & map, const Eigen::Vector2f & requested, float max_radius)
 {
+  if (max_radius == 0.0f) {
+    return pointIsFree(map, requested) ? std::optional<Eigen::Vector2f>(requested) : std::nullopt;
+  }
   if (resolved_ && requested.allFinite() && (requested - requested_).norm() <= 1e-4f) {
     if (
       std::isfinite(max_radius) && max_radius >= 0 &&

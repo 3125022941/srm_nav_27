@@ -118,6 +118,11 @@ void TdtGlobalPlanner::configure(
     node->get_parameter(plugin_name_ + ".simplify_epsilon").as_double());
   save_point_max_radius_ = static_cast<float>(
     node->get_parameter(plugin_name_ + ".save_point_max_radius").as_double());
+  declare_parameter_if_not_declared(
+    node, plugin_name_ + ".goal_snap_max_radius",
+    rclcpp::ParameterValue(static_cast<double>(save_point_max_radius_)));
+  goal_snap_max_radius_ = static_cast<float>(
+    node->get_parameter(plugin_name_ + ".goal_snap_max_radius").as_double());
   path_resample_step_ = static_cast<float>(
     node->get_parameter(plugin_name_ + ".path_resample_step").as_double());
   orientation_mode_ =
@@ -132,10 +137,12 @@ void TdtGlobalPlanner::configure(
       "TdtGlobalPlanner: cost_inflate_radius / simplify_epsilon must be positive");
   }
   if (!std::isfinite(save_point_max_radius_) || save_point_max_radius_ < 0.0f ||
+    !std::isfinite(goal_snap_max_radius_) || goal_snap_max_radius_ < 0.0f ||
     !std::isfinite(path_resample_step_) || path_resample_step_ < 0.0f)
   {
     throw nav2_core::PlannerException(
-      "TdtGlobalPlanner: save_point_max_radius / path_resample_step must be finite and nonnegative");
+      "TdtGlobalPlanner: save_point_max_radius, goal_snap_max_radius and path_resample_step "
+      "must be finite and nonnegative");
   }
 }
 
@@ -195,14 +202,16 @@ nav_msgs::msg::Path TdtGlobalPlanner::createPlan(
 
   const auto resolved_start = nearestFreePoint(
     snap, Eigen::Vector2f(start.pose.position.x, start.pose.position.y), save_point_max_radius_);
-  const auto resolved_goal = stable_goal_.resolve(
-    snap, Eigen::Vector2f(goal.pose.position.x, goal.pose.position.y), save_point_max_radius_);
   if (!resolved_start) {
     throw nav2_core::PlannerException("TdtGlobalPlanner: no free start within configured tolerance");
   }
+  const Eigen::Vector2f requested_goal(goal.pose.position.x, goal.pose.position.y);
+  const auto resolved_goal = stable_goal_.resolve(snap, requested_goal, goal_snap_max_radius_);
   if (!resolved_goal) {
     throw nav2_core::PlannerException(
-      "TdtGlobalPlanner: goal unavailable; a blocked resolved goal is not moved during replanning");
+      "TdtGlobalPlanner: goal unavailable at (" + std::to_string(requested_goal.x()) + ", " +
+      std::to_string(requested_goal.y()) + "), goal_snap_max_radius=" +
+      std::to_string(goal_snap_max_radius_) + " m");
   }
   const Eigen::Vector2f s = *resolved_start;
   const Eigen::Vector2f g = *resolved_goal;
