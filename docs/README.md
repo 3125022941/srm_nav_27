@@ -26,6 +26,7 @@
 
 - [MID360 使用指南](operations/mid360使用指南.md) —— 网络配置与驱动启动。
 - [Z-Localization Backend 功能验收](operations/Z-Localization后端功能验收.md) —— 假设输入链路正常，直接验地图定位、跟踪、错误地图拒绝、reset 与导航接管。
+- [Z-Localization 后端继续验收方案](operations/Z-Localization后端继续验收方案.md) —— 在输出位姿稳定的基线上，继续验 reset/状态机、输出尖峰/时间同步、回环 A/B、导航联动与长跑开销。
 - [导航速度调试指南](operations/导航速度调试指南.md) —— 限速、加速度、前瞻、PID。
 - [导航避障调试指南](operations/导航避障调试指南.md) —— 代价地图、膨胀、净空、恢复行为。
 - [分支合并说明](operations/分支合并说明.md) —— `--no-ff` 合并与 CLion 操作。

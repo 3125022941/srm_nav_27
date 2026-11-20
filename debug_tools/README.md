@@ -455,6 +455,11 @@ T_off 一致性  : yaw  +63.00° ± 0.035°, |t| 60.0 ± 0.7 mm
 两列接近 → 事件匹配正确、修正真的落到 TF 上。两列差很多 → 事件窗口里混进了别的修正，
 或图优化在两次 TF 之间连续改了几次；先看①②的趋势，不要只盯单次数字。
 
+> ⚠ **map→odom 是纠正面，不是定位输出误差。** 前端在自转/激烈运动下漂 0.1 m，
+> map→odom 就会反向改 0.1 m；`/localization/odometry`（或 `TF map→base_link`）的
+> 输出位姿反而可能是平滑的。判断定位稳不稳请看输出位姿；本工具 ①② 是纠正面视图，
+> 不能把它的台阶直接当成定位误差。
+
 > 日志可见性：backend 的领域日志（`global correction committed` / `loop scan-to-map accepted`）
 > 原先用独立 logger `backend`，只走 launch 的 stdout，**不会进 `/rosout`**；本次已在
 > `apps/main.cpp` 把领域 logger 换成节点 logger，重建 backend 后这些行才会出现在
