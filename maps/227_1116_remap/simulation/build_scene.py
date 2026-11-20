@@ -33,7 +33,7 @@ for kind in ['collision','visual']:
 ET.indent(base,space='  ');base.write(OUT/'world.sdf',encoding='utf-8',xml_declaration=True)
 clear=distance_transform_edt(im==254)*r;labs,n=label(clear>=.42);sizes=np.bincount(labs.ravel());sizes[0]=0;comp=sizes.argmax();ys,xs=np.where(labs==comp);k=np.argmax(clear[ys,xs]);spawn=[float(ox+(xs[k]+.5)*r),float(oy+(ys[k]+.5)*r)]
 sim=yaml.safe_load((ROOT/'src/srm27_gazebo_simulator/config/srm_sim.yaml').read_text());sim.update(world='srm_empty',world_sdf=str(OUT/'world.sdf'),gui=False);sim['robot'].update(x=spawn[0],y=spawn[1],yaw=0.0);(OUT/'sim.yaml').write_text(yaml.safe_dump(sim,sort_keys=False))
-nav=yaml.safe_load((ROOT/'src/srm27_navigation/srm27_nav_bringup/config/simulation/nav2_params_srm_fakeyaw.yaml').read_text());tdt=yaml.safe_load((ROOT/'src/tdt_nav_kit/config/nav2_params_srm_tdt_smooth.yaml').read_text())
+nav=yaml.safe_load((ROOT/'src/bringup/srm27_nav_bringup/config/simulation/current/nav2_params_srm_fakeyaw.yaml').read_text());tdt=yaml.safe_load((ROOT/'src/tdt_nav_kit/config/nav2_params_srm_tdt_smooth.yaml').read_text())
 for name in ['planner_server','smoother_server']:nav[name]=copy.deepcopy(tdt[name])
 nav['bt_navigator']['ros__parameters']['default_nav_to_pose_bt_xml']=str(ROOT/'src/tdt_nav_kit/behavior_trees/navigate_to_pose_w_smoothing.xml')
 (OUT/'nav2_params_srm_tdt_fakeyaw.yaml').write_text(yaml.safe_dump(nav,sort_keys=False))

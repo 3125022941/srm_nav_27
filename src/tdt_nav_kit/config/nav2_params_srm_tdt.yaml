@@ -322,7 +322,7 @@ bt_navigator:
     default_server_timeout: 100                         # 默认动作服务器超时（毫秒）
     wait_for_service_timeout: 1000                      # 等待服务超时（毫秒）
     default_nav_to_pose_bt_xml: $(find-pkg-share tdt_nav_kit)/behavior_trees/navigate_to_pose_w_smoothing.xml # 单目标导航行为树文件
-    default_nav_through_poses_bt_xml: $(find-pkg-share srm27_nav_bringup)/behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml # 多目标导航行为树文件
+    default_nav_through_poses_bt_xml: $(find-pkg-share srm27_nav_bringup)/nav2_bt/navigate_through_poses_w_replanning_and_recovery.xml # 多目标导航行为树文件
     plugin_lib_names:
       - nav2_compute_path_to_pose_action_bt_node              # 计算到单个目标位姿的路径
       - nav2_compute_path_through_poses_action_bt_node        # 计算经过多个目标位姿的路径

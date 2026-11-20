@@ -70,7 +70,7 @@ sim['robot'].update(x=0.236, y=-0.110, yaw=0.0)
 # Keep simulation sensor wiring; transplant the handoff's navigation algorithms
 # and costmap geometry. Remove the real IMU's fixed yaw offset by retaining the
 # simulation fake_vel_transform section.
-nav = yaml.safe_load((ROOT/'src/srm27_navigation/srm27_nav_bringup/config/simulation/nav2_params_srm_fakeyaw.yaml').read_text())
+nav = yaml.safe_load((ROOT/'src/bringup/srm27_nav_bringup/config/simulation/current/nav2_params_srm_fakeyaw.yaml').read_text())
 real = yaml.safe_load((ROOT/'log_diag/tdt_smoother_ab_20261116/nav2_params_tdt_smoother.yaml').read_text())
 for name in ['controller_server', 'planner_server', 'smoother_server', 'bt_navigator', 'global_costmap', 'local_costmap']:
     nav[name] = real[name]
@@ -83,7 +83,7 @@ nav['planner_server']['ros__parameters']['GridBased'] = {
     'treat_unknown_as_obstacle': True, 'save_point_max_radius': 0.4,
     'path_resample_step': 0.20,
 }
-nav['bt_navigator']['ros__parameters']['default_nav_to_pose_bt_xml'] = str(ROOT/'src/srm27_navigation/srm27_nav_bringup/behavior_trees/navigate_to_pose_w_smoothing.xml')
+nav['bt_navigator']['ros__parameters']['default_nav_to_pose_bt_xml'] = str(ROOT/'src/bringup/srm27_nav_bringup/nav2_bt/navigate_to_pose_w_smoothing.xml')
 
 
 def sim_time(obj):
@@ -98,7 +98,7 @@ sim_time(nav)
 for threshold in [248,250]:
     nav['planner_server']['ros__parameters']['GridBased']['occupancy_threshold']=threshold
     (OUT/f'nav2_params_threshold{threshold}_fakeyaw.yaml').write_text(yaml.safe_dump(nav,sort_keys=False))
-shutil.copyfile(ROOT/'src/srm27_navigation/srm27_nav_bringup/config/real/speed_limits_slow.yaml',OUT/'speed_limits.yaml')
+shutil.copyfile(ROOT/'src/bringup/srm27_nav_bringup/config/real/current/speed_limits_slow.yaml',OUT/'speed_limits.yaml')
 meta = dict(map_yaml=str(MAP), map_sha256=hashlib.sha256(image_path.read_bytes()).hexdigest(),
             dimensions=[w,h], resolution=r, origin=cfg['origin'], spawn=[0.236,-0.110,0.0],
             goal=[-1.48,2.02], obstacle_height_m=0.8, occupied_cells=int(occ.sum()),

@@ -30,7 +30,7 @@
 
 ## 启动前置（重要）
 
-`src/srm27_navigation/srm27_nav_bringup/package.xml` **没有**把本包声明为
+`src/bringup/srm27_nav_bringup/package.xml` **没有**把本包声明为
 `exec_depend`（约束 2 的代价）。pluginlib 靠 ament resource index 发现插件，
 只要本包已 build 且 overlay 已 source 就能加载，但：
 
@@ -76,7 +76,7 @@ echo /usr/local/lib | sudo tee /etc/ld.so.conf.d/usr-local.conf && sudo ldconfig
 - **实车**。`start_real_nav.sh --tdt-planner` 把 `GridBased` 全局规划器从 Theta* 切换为 YAstar，
   局部轨迹和跟踪继续由 MINCO/MPC 执行。Theta* 是默认项。低速首轮使用
   `speed_limits_tdt_first_run.yaml` 的 **0.40 m/s** 平移上限，加 `--no-chassis-spin` 关闭自转。
-  [低速实车预检](#实车首次联调) · [实车切换实现](../srm27_navigation/srm27_nav_bringup/launch/nav_srm_real_launch.py)
+  [低速实车预检](#实车首次联调) · [实车切换实现](../bringup/srm27_nav_bringup/launch/nav_srm_real_launch.py)
 - **场地仿真**。`227_1116_remap` 的配置在 `ComputePathToPose` 和 `FollowPath` 之间加入
   `SmoothPath`，运行顺序为 YAstar → TDT 平滑器 → MINCO/MPC。
   [场地仿真启动与往返验证](../../maps/227_1116_remap/simulation/field_validation/README.md)
@@ -101,7 +101,7 @@ TDT 入口默认加载与 Gazebo 世界同名的地图。从 `sim_config_file` �
 作为 `map → odom` 的默认平移和航向。使用其他坐标原点的地图时，可显式传入
 `map_to_odom_x`、`map_to_odom_y` 和 `map_to_odom_yaw`。
 
-`rmuc_2025.pgm` 用 `python3 script/build_rmuc_2025_map.py` 从 Gazebo 碰撞网格生成，
+`rmuc_2025.pgm` 用 `python3 scripts/bringup/build_rmuc_2025_map.py` 从 Gazebo 碰撞网格生成，
 保留平地并标记底盘高度范围内的障碍。YAML 原点为 `[-0.10, -0.10, 0]`，分辨率 0.05 m。
 旧测试目标 `(12, 3)` 位于障碍区域，可用默认出生点 `(3.4, 9.5)` 到 `(10, 5)` 验证导航。
 
@@ -168,8 +168,8 @@ colcon build --symlink-install --packages-select srm27_nav_bringup tdt_nav_kit \
   --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/setup.bash
 
-limits="$PWD/src/srm27_navigation/srm27_nav_bringup/config/real/speed_limits_tdt_first_run.yaml"
-./script/start_real_nav.sh --check --tdt-planner --lio --map <地图名> \
+limits="$PWD/src/bringup/srm27_nav_bringup/config/real/current/speed_limits_tdt_first_run.yaml"
+./scripts/bringup/start_real_nav.sh --check --tdt-planner --lio --map <地图名> \
   --map-to-odom <X> <Y> <YAW> --no-chassis-spin --no-joy --speed-limits "$limits"
 ```
 

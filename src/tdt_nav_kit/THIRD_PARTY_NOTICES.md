@@ -43,7 +43,7 @@ OsqpEigen（无 rosdep key，源码安装，见 README）。`kinodynamicAstar.cp
 ## 许可证适用边界
 
 - `vendor/**` 下的上游源码与 `vendor/LICENCE` 适用 **MIT**，保留原版权声明，未添加任何 Apache-2.0 头，未重新授权。
-- 本包其余文件（`include/`、`src/`、`config/`、`launch/`、`test/`、`CMakeLists.txt`、`package.xml` 等）为本工作区新增，适用仓库根 `src/srm27_navigation/LICENSE` 的 **Apache-2.0**。
+- 本包其余文件（`include/`、`src/`、`config/`、`launch/`、`test/`、`CMakeLists.txt`、`package.xml` 等）为本工作区新增，适用仓库根 `src/bringup/srm27_navigation/LICENSE` 的 **Apache-2.0**。
 - 两套许可各自独立存放、互不混改。上游依赖另有：OSQP Apache-2.0、OsqpEigen BSD-3-Clause、Eigen MPL-2.0（阶段二才会引入 OSQP / OsqpEigen）。
 
 ## 升级流程（禁止「顺手同步」）
