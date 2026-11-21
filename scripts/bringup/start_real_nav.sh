@@ -94,7 +94,7 @@
 # 参数（参数面与 scripts/bringup/start_sim_nav.sh **对齐**：同名的参数两边同义、同一条命令两边都能跑）:
 #
 #   ── 与 start_sim_nav.sh 同名同义 ─────────────────────────────────────────────
-#   -m, --map <名字|绝对路径>   地图名(在 maps/ 下解析)或 YAML 绝对路径; 缺省自动选择
+#   -m, --map <名字|绝对路径>   地图名(在 maps/ 下解析)或 YAML 绝对路径; 缺省 219_1121
 #       --prior-pcd <名字|路径> 重定位先验点云, 默认与地图同名
 #   -p, --params <绝对路径>     Nav2 参数文件（实车默认 = 迁移链那份, 见 -c）
 #   -c, --controller <auto|minco>   控制器（实车另有 omni 可选, 见下）
@@ -413,7 +413,7 @@ LIO_DISABLED="${LIO_DISABLED:-0}"
 # (默认值不能在这里就写进 START_LIO, 否则 --slam 会叠成"两个模式同时开")。
 MODE_GIVEN=0
 
-MAP_NAME="${MAP_NAME:-${MAP:-}}"
+MAP_NAME="${MAP_NAME:-${MAP:-219_1121}}"
 PRIOR_PCD_FILE="${PRIOR_PCD_FILE:-}"
 PARAMS_FILE="${PARAMS_FILE:-}"
 # 参数文件是用户给的还是本脚本的默认值: -c 只在自己选默认文件时才去覆盖它。
