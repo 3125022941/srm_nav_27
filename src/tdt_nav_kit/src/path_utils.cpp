@@ -58,6 +58,43 @@ PointVec resamplePath(const PointVec & points, float step, int max_points)
   return dense;
 }
 
+PointVec decimatePath(const PointVec & points, float step, int max_points)
+{
+  if (step <= 1e-3f || points.size() < 3 || max_points < 2) {
+    return points;
+  }
+
+  std::vector<float> cum(points.size(), 0.0f);
+  for (std::size_t i = 1; i < points.size(); ++i) {
+    cum[i] = cum[i - 1] + (points[i] - points[i - 1]).norm();
+  }
+  const float total = cum.back();
+  if (total <= step) {
+    return points;
+  }
+
+  // 均匀弧长采样：段长取 total/n，恒 <= step
+  int n = static_cast<int>(std::ceil(total / step));
+  n = std::min(n, max_points - 1);
+  n = std::max(n, 1);
+
+  PointVec out;
+  out.reserve(static_cast<std::size_t>(n) + 1);
+  out.push_back(points.front());
+  std::size_t seg = 1;
+  for (int k = 1; k < n; ++k) {
+    const float target = total * static_cast<float>(k) / static_cast<float>(n);
+    while (seg + 1 < points.size() && cum[seg] < target) {
+      ++seg;
+    }
+    const float seg_len = cum[seg] - cum[seg - 1];
+    const float t = seg_len > 1e-6f ? (target - cum[seg - 1]) / seg_len : 0.0f;
+    out.push_back(points[seg - 1] + t * (points[seg] - points[seg - 1]));
+  }
+  out.push_back(points.back());
+  return out;
+}
+
 PointVec roundCorners(
   const PointVec & points, float cut, float min_turn_deg, float sample_step)
 {

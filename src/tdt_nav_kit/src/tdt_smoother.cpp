@@ -150,6 +150,9 @@ void TdtSmoother::configure(
   declare_parameter_if_not_declared(
     node, p + "fallback_to_resampled", rclcpp::ParameterValue(fallback_to_resampled_));
   declare_parameter_if_not_declared(
+    node, p + "corner_round_input_step",
+    rclcpp::ParameterValue(corner_round_input_step_));
+  declare_parameter_if_not_declared(
     node, p + "corner_round_cut", rclcpp::ParameterValue(corner_round_cut_));
   declare_parameter_if_not_declared(
     node, p + "corner_round_min_turn_deg",
@@ -186,6 +189,8 @@ void TdtSmoother::configure(
   path_resample_max_points_ =
     static_cast<int>(node->get_parameter(p + "path_resample_max_points").as_int());
   fallback_to_resampled_ = node->get_parameter(p + "fallback_to_resampled").as_bool();
+  corner_round_input_step_ =
+    static_cast<float>(node->get_parameter(p + "corner_round_input_step").as_double());
   corner_round_cut_ =
     static_cast<float>(node->get_parameter(p + "corner_round_cut").as_double());
   corner_round_min_turn_deg_ =
@@ -219,11 +224,15 @@ void TdtSmoother::configure(
       "表现为平滑静默失效。请把 path_resample_step 设为 0.30，或改用 backend=close。",
       backend_.c_str(), static_cast<double>(path_resample_step_));
   }
-  if (backend_ == "corridor") {
-    RCLCPP_WARN(
-      node->get_logger(),
-      "TdtSmoother: backend=corridor 在 RMUC 2026 仿真地图上实测不收敛"
-      "（加密到 1191 点后仍失败，408 ms），建议改用 backend=path。");
+  if (backend_ == "corridor" || (backend_ != "path" && backend_ != "close")) {
+    // 硬拒绝：corridor 的走廊约束只加在节点上、退化盒会把节点钉进障碍、
+    // 碰撞后收缩盒子方向相反，实测多轮不收敛后回退（见验证报告 §6.2）。
+    // 这不是调参能解决的，禁止带病上线；toBackend 对未知值也会落到 corridor，
+    // 因此这里同时拦截拼写错误。
+    throw std::runtime_error(
+            "TdtSmoother: backend=" + backend_ +
+            " 不支持/已禁用（corridor 走廊公式存在结构缺陷，实测碰撞迭代不收敛）；"
+            "仅支持 backend=path 或 close。");
   }
   if (path_resample_max_points_ < 100) {
     RCLCPP_WARN(
@@ -312,9 +321,16 @@ bool TdtSmoother::smooth(
   // 3) 填输入。上游默认 backend=Close、normTime=false、collisionIter=2，
   //    与 README 示例不同，因此这里全部显式设置，不依赖库默认。
   const std::vector<Eigen::Vector2f> raw_points = toPoints(path);
+  // 切角长度被 0.45*相邻段长 夹住：规划器输出段长 ~0.2 m 时 cut=0.4 实际只有
+  // 0.09 m，90° 拐角仍是 R≈6 cm 的圆弧。先抽稀，cut 才用得上；几何仍由
+  // 求解器的碰撞检查兜底。
+  const std::vector<Eigen::Vector2f> decimated =
+    corner_round_cut_ > 1e-3f ?
+    decimatePath(raw_points, corner_round_input_step_, path_resample_max_points_) :
+    raw_points;
   // 先圆弧化折角，再加密：顺序反了会把贝塞尔重新拉成折线。
   const std::vector<Eigen::Vector2f> rounded = roundCorners(
-    raw_points, corner_round_cut_, corner_round_min_turn_deg_,
+    decimated, corner_round_cut_, corner_round_min_turn_deg_,
     corner_round_sample_step_);
   const std::vector<Eigen::Vector2f> points =
     resamplePath(rounded, path_resample_step_, path_resample_max_points_);
@@ -389,9 +405,13 @@ bool TdtSmoother::smooth(
     if (fallback_to_resampled_ && points.size() >= 2) {
       // 返回已加密的折线而不是原始稀疏点：上游规划器的段长可达 10 m，
       // Nav2 控制器按 2.5 m 裁剪后只剩 1 个点，会退化成 0.2 m/s 爬行并判无进展。
+      // 但必须返回 false：回退只保证"路径可跟踪"，不代表平滑完成，
+      // smoother_server 据此把 action 结果的 was_completed 置 false。
+      // （Humble 的 SmoothPath BT 节点不检查该字段，on_success 恒返回 SUCCESS，
+      //   仍会把写回的折线交给 FollowPath，因此不会触发反复重规划。）
       writeBack(path, points, orientation_mode_);
       path.header.stamp = node->now();
-      return true;
+      return false;
     }
     return false;
   }
@@ -405,9 +425,10 @@ bool TdtSmoother::smooth(
       (fallback_to_resampled_ && points.size() >= 2) ?
       "回退到加密折线（保证可跟踪）" : "keep original path");
     if (fallback_to_resampled_ && points.size() >= 2) {
+      // 同上一处：写回可跟踪的加密折线，但如实返回 false（was_completed=false）。
       writeBack(path, points, orientation_mode_);
       path.header.stamp = node->now();
-      return true;
+      return false;
     }
     return false;
   }

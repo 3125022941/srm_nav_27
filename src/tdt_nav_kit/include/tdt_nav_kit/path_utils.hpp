@@ -40,6 +40,20 @@ using PointVec = std::vector<Eigen::Vector2f>;
 PointVec resamplePath(const PointVec & points, float step, int max_points);
 
 /**
+ * @brief 按弧长均匀抽稀点列（把段长放大到 step 量级，保留首末点）。
+ *
+ * roundCorners 的切角长度被 0.45*相邻段长 夹住：规划器输出段长约 0.2 m 时，
+ * cut=0.4 实际只能用 0.09 m，90° 拐角仍是 R≈6 cm 的圆弧。先抽稀到 0.8 m
+ * 量级，切角才能真正起作用（实测 κmax 10 → 3.1，净空不变）。
+ *
+ * @param points     输入点列
+ * @param step       目标段长（米）；<= 0 表示不处理
+ * @param max_points 输出点数上限
+ * @return 抽稀后的点列；输入不足 3 点、step <= 0 或总长不足一个 step 时原样返回
+ */
+PointVec decimatePath(const PointVec & points, float step, int max_points);
+
+/**
  * @brief 折角圆弧化：用二次贝塞尔在拐点处切角。
  *
  * MinimumSnap 是对输入点做插值的，折线本身的尖角会被原样保留（实测 545° 总转角

@@ -265,8 +265,10 @@ YAstar 的路径点少 54 倍、规划快约 2 倍；TDT 平滑器把 6 m 的稀
    `static_cast<int>(maxRange / mapping)`，1e9 / 0.05 = 2e10 超出 int，
    走廊扩张越界读，**直接把 component_container 打崩**（无 OOM 记录、无异常输出）。
    代码里加了硬性夹紧 `kMaxCorridorRangeLimit = 1e6`，默认值降到 10 m。
-3. **`corridor` 后端在真实地图上不可行**：OSQP 返回 -4（dual infeasible）/ -6（超时），
-   稀疏与稠密路径都不收敛；同一路径 `close` 后端 0.2~19 ms 解出且无碰撞。
+3. **`corridor` 后端在真实地图上不可行**：早期日志被读成 OSQP -4/-6，2026-11-21
+   复测确认 QP 本身可解，失败发生在**碰撞迭代**（`[smooth-iter]`，无 `[osqp-fail]`）：
+   走廊约束只加在节点上、退化盒会把节点钉进障碍、碰撞后还收缩盒子。稀疏与稠密
+   路径都过不了；同一路径 `close` 后端 0.2~19 ms 解出且无碰撞。
    当时把默认后端改成了 `close`。
 
    > 2026-11-05 补充：加入路径加密（见下文 `path_resample_step`）后重测三种后端
@@ -276,10 +278,11 @@ YAstar 的路径点少 54 倍、规划快约 2 倍；TDT 平滑器把 6 m 的稀
    > | --- | --- | --- |
    > | `path` | 成功 | **2 ~ 17 ms** |
    > | `close` | 成功 | 83 ms |
-   > | `corridor` | **失败**（OSQP 不收敛）| 408 ms |
+   > | `corridor` | **失败**（碰撞迭代不收敛，QP 可解）| 408 ms |
    >
    > 三者输出几何一致（34.56 m、最大步长 0.04 m、无碰撞），默认后端据此改为
-   > **`path`**。corridor 仍然不可用，且换后端前必须先确认加密是开的。
+   > **`path`**。2026-11-21 起 `configure` 对 `backend=corridor` 直接抛异常
+   > （硬拒绝），误配置会让 smoother_server 配置失败；生产只能 `path` 或 `close`。
 
 `max_speed / max_acc` 一度从 2.0/2.0 改到 **50/20**，依据是上游代码注释
 「建议 speed 大于 40，acc 大于 10」。后续对照实验**否掉了这个判断**：

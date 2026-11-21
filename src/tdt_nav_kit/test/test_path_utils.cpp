@@ -23,6 +23,7 @@
 namespace
 {
 
+using tdt_nav_kit::decimatePath;
 using tdt_nav_kit::PointVec;
 using tdt_nav_kit::resamplePath;
 using tdt_nav_kit::roundCorners;
@@ -147,6 +148,60 @@ TEST(PathUtils, RoundCornersSmoothsRightAngle)
     EXPECT_GE(p.y(), -1e-4f);
     EXPECT_LE(p.y(), 1.0f + 1e-4f);
   }
+}
+
+TEST(PathUtils, DecimateRejectsDegenerateInput)
+{
+  PointVec empty;
+  EXPECT_TRUE(decimatePath(empty, 0.8f, 100).empty());
+
+  const PointVec two{Eigen::Vector2f(0.0f, 0.0f), Eigen::Vector2f(1.0f, 0.0f)};
+  EXPECT_EQ(decimatePath(two, 0.8f, 100).size(), 2u);
+
+  const PointVec line = makeLine(0.0f, 0.0f, 5.0f, 0.0f, 11);
+  // step <= 0 表示不处理
+  EXPECT_EQ(decimatePath(line, 0.0f, 100).size(), line.size());
+  EXPECT_EQ(decimatePath(line, -1.0f, 100).size(), line.size());
+}
+
+TEST(PathUtils, DecimateHonorsStepAndKeepsEndpoints)
+{
+  const PointVec line = makeLine(0.0f, 0.0f, 10.0f, 0.0f, 51);
+  const PointVec out = decimatePath(line, 0.8f, 1000);
+
+  ASSERT_GE(out.size(), 3u);
+  EXPECT_LE(maxStep(out), 0.8 + 1e-4);
+  EXPECT_NEAR(out.front().x(), 0.0, 1e-6);
+  EXPECT_NEAR(out.back().x(), 10.0, 1e-6);
+  // 均匀弧长：各段等长
+  EXPECT_NEAR(maxStep(out), 10.0 / static_cast<double>(out.size() - 1), 1e-4);
+}
+
+TEST(PathUtils, DecimateCapsPointCount)
+{
+  const PointVec line = makeLine(0.0f, 0.0f, 10.0f, 0.0f, 1001);
+  const PointVec out = decimatePath(line, 0.05f, 10);
+
+  EXPECT_LE(out.size(), 10u);
+  EXPECT_NEAR(out.back().x(), 10.0, 1e-6);
+}
+
+TEST(PathUtils, DecimateLetsCornerRoundingUseFullCut)
+{
+  // 0.2 m 采样的直角路径：不抽稀时切角被 0.45*段长 夹到 0.09 m；
+  // 抽稀到 0.8 m 后 cut=0.4 才能用满，圆弧应更平缓（逐点转角更小）。
+  PointVec dense = makeLine(0.0f, 0.0f, 4.0f, 0.0f, 21);
+  const PointVec leg = makeLine(4.0f, 0.0f, 4.0f, 4.0f, 21);
+  dense.insert(dense.end(), leg.begin() + 1, leg.end());
+  ASSERT_NEAR(maxStep(dense), 0.2, 1e-3);
+
+  const PointVec clustered = roundCorners(dense, 0.4f, 25.0f, 0.05f);
+  const PointVec sparse = roundCorners(
+    decimatePath(dense, 0.8f, 1000), 0.4f, 25.0f, 0.05f);
+
+  EXPECT_LT(maxTurnDeg(sparse), maxTurnDeg(clustered));
+  EXPECT_NEAR((sparse.front() - dense.front()).norm(), 0.0, 1e-5);
+  EXPECT_NEAR((sparse.back() - dense.back()).norm(), 0.0, 1e-5);
 }
 
 TEST(PathUtils, RoundCornersRespectsAdjacentSegmentLimits)

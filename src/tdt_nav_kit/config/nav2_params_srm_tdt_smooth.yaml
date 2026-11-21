@@ -593,9 +593,10 @@ smoother_server:
       max_dx: 3                                           # 最大导数阶数
       strict_collision: false                             # 更严格但更慢、更易失败
       # 加密后实测（11 点 34.46 m -> 1191 点）：path 2~17 ms 成功，close 83 ms 成功，
-      # corridor 失败（OSQP 不收敛，408 ms）。输出几何一致，取最快且稳的 path。
-      # 注意：加密关闭（path_resample_step: 0）时 path/corridor 都会失败。
-      backend: "path"                                     # path | close | corridor
+      # corridor 碰撞迭代不收敛（306 ms）并回退；现已在 configure 阶段硬拒绝 corridor。
+      # 输出几何一致，取最快且稳的 path。
+      # 注意：加密关闭（path_resample_step: 0）时 path 也会失败。
+      backend: "path"                                     # 仅支持 path | close
       collision_iter: 6                                   # 碰撞检测迭代次数
       norm_time: true                                     # 段内归一化时间
       max_corridor_range: 2.5                             # 走廊最大扩张范围（米）；上游默认 2.5
@@ -617,6 +618,10 @@ smoother_server:
       # 折角圆弧化：MinimumSnap 对输入点是插值的，折线尖角会被原样保留
       # （实测 545° 总转角路径上出现 24 rad/m，转弯半径 4 cm，底盘跟不住）。
       # cut 为切角长度（米），0 = 关闭；min_turn_deg 以下的小转折不切。
+      # input_step：切角前按弧长抽稀的步长。cut 被 0.45*相邻段长 夹住，
+      # 规划器输出段长 0.2 m 时 cut=0.4 实际只有 0.09 m；抽稀到 0.8 m 后
+      # 实测 κmax 10 → 3.1（净空不变）。0 = 不抽稀。
+      corner_round_input_step: 0.80                      # 切角前抽稀步长（米），0 = 不抽稀
       corner_round_cut: 0.40                             # 切角长度（米），0 = 关闭
       corner_round_min_turn_deg: 25.0                    # 大于该转角（度）才切角
       corner_round_sample_step: 0.20                     # 贝塞尔采样步长（米）
