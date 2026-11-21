@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np,yaml
 from PIL import Image
 from scipy.spatial import cKDTree
-P=argparse.ArgumentParser();P.add_argument('run_dir');P.add_argument('--radius',type=float,default=.33);args=P.parse_args();SCENE=Path(__file__).resolve().parent;RUN=Path(args.run_dir).resolve();m=yaml.safe_load((SCENE.parent/'227_1116_remap.yaml').read_text());r=m['resolution'];ox,oy,_=m['origin'];image=SCENE.parent/m['image'];a=np.flipud(np.array(Image.open(image)));j,i=np.where(a==0);centers=np.c_[ox+(i+.5)*r,oy+(j+.5)*r];tree=cKDTree(centers)
+P=argparse.ArgumentParser();P.add_argument('run_dir');P.add_argument('--radius',type=float,default=.33);P.add_argument('--map',type=Path);args=P.parse_args();SCENE=Path(__file__).resolve().parent;RUN=Path(args.run_dir).resolve();mp=(args.map or SCENE.parent/'227_1116_remap.yaml').resolve();m=yaml.safe_load(mp.read_text());r=m['resolution'];ox,oy,_=m['origin'];image=mp.parent/m['image'];a=np.flipud(np.array(Image.open(image)));j,i=np.where(a==0);centers=np.c_[ox+(i+.5)*r,oy+(j+.5)*r];tree=cKDTree(centers)
 records=list(csv.DictReader((RUN/'ground_truth.csv').open()));results=json.loads((RUN/'results.json').read_text());diagnostics=json.loads((RUN/'diagnostics.json').read_text());summary={'source_map_sha256':hashlib.sha256(image.read_bytes()).hexdigest(),'envelope_radius_m':args.radius,'method':'Distance to occupied-cell axis-aligned square faces; subtract robot envelope radius; interpolate recorded XY segments at <=2mm spacing. This is a geometric replay check, not contact-sensor evidence.','legs':[]}
 def distances(points):
  nearest,_=tree.query(points)
