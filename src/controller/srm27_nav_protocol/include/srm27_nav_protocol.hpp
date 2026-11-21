@@ -109,6 +109,9 @@ private:
   // 参数
   double send_rate_hz_{100.0};     // §6.1 推荐 100 Hz 定频单帧
   double cmd_timeout_sec_{0.5};    // §6.3 看门狗: 超时未更新则归零
+  // 下位机功率档：100w（当前）/ 180w（升级后）。作为出口硬上限，
+  // 下面的 max_* 只能比档位值小，超过会被钳位并在启动时告警。
+  std::string power_profile_{"100w"};
   double max_vx_{2.6};              // 单轴平移速度上限 (m/s)
   double max_vy_{2.6};
   double max_linear_speed_{2.6};    // 平移合速度上限 (m/s)

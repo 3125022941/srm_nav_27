@@ -22,10 +22,14 @@
     # 协议建议 500 ms。
     cmd_timeout_sec: 0.5
 
-    # ---- 串口速度与加速度上限（当前下位机 100 W 档）----
+    # ---- 下位机功率档（协议层硬上限）----
+    # 100w = 当前下位机（2.6 m/s / 7 m/s² / 8.5 rad/s / 25 rad/s²）
+    # 180w = 升级固件后（3.5 m/s / 12 m/s² / 12 rad/s / 40 rad/s²）
+    # 节点按档位钳位：下面的 max_* 只能往小调，超过档位值会告警并钳位。
+    power_profile: "100w"
+
+    # ---- 串口速度与加速度上限 ----
     # 在速度对齐之后、写入串口帧之前生效。平移合速度和合加速度都按 XY 向量模长限制。
-    # 180 W 档参考：max_vx/max_vy/max_linear_speed=3.5，max_linear_accel=12.0，
-    #              max_wz=12.0，max_angular_accel=40.0。
     max_vx: 2.60             # m/s，X 单轴上限
     max_vy: 2.60             # m/s，Y 单轴上限
     max_linear_speed: 2.60   # m/s，平移合速度上限

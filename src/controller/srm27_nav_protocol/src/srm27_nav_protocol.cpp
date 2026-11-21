@@ -27,6 +27,24 @@ namespace
 {
 constexpr double kPi = 3.14159265358979323846;
 
+// 下位机功率档的出口硬上限。协议层只允许往小调：
+// 参数超过档位值时会被钳位并告警，避免上层改参数绕过下位机能力。
+struct PowerLimitProfile
+{
+  const char * name;
+  double max_vx;
+  double max_vy;
+  double max_linear_speed;
+  double max_wz;
+  double max_linear_accel;
+  double max_angular_accel;
+};
+
+constexpr PowerLimitProfile kPower100W{
+  "100w", 2.6, 2.6, 2.6, 8.5, 7.0, 25.0};
+constexpr PowerLimitProfile kPower180W{
+  "180w", 3.5, 3.5, 3.5, 12.0, 12.0, 40.0};
+
 // 把角度折算到 (-π, π]。
 // 关节角在 ±π 处会整圈跳变，直接下发会让 TF 跳一整圈、yaw 差分出尖峰，
 // 所以发出去之前一定先归一化。
@@ -244,6 +262,7 @@ void Srm27NavProtocolNode::getParams()
   // ---- 协议 §3.3 / §6 相关参数 ----
   send_rate_hz_ = declare_parameter<double>("send_rate_hz", 100.0);
   cmd_timeout_sec_ = declare_parameter<double>("cmd_timeout_sec", 0.5);
+  power_profile_ = declare_parameter<std::string>("power_profile", power_profile_);
   max_vx_ = declare_parameter<double>("max_vx", max_vx_);
   max_vy_ = declare_parameter<double>("max_vy", max_vy_);
   max_linear_speed_ = declare_parameter<double>("max_linear_speed", max_linear_speed_);
@@ -289,14 +308,41 @@ void Srm27NavProtocolNode::getParams()
       "linear_velocity_scale / angular_velocity_scale 必须在 (0, 2.0] 内且有限"};
   }
 
+  // ---- 功率档硬上限 ----
+  // 下位机当前是 100 W；协议层不允许把 max_* 调到档位值以上。
+  // 180 W 固件上车后，把 power_profile 改成 "180w" 即可，不用改代码。
+  const PowerLimitProfile * profile = nullptr;
+  if (power_profile_ == kPower100W.name) {
+    profile = &kPower100W;
+  } else if (power_profile_ == kPower180W.name) {
+    profile = &kPower180W;
+  } else {
+    throw std::invalid_argument{"power_profile 必须是 \"100w\" 或 \"180w\""};
+  }
+  const auto apply_profile_cap = [&](double & value, double cap, const char * key) {
+    if (value > cap) {
+      RCLCPP_WARN(
+        get_logger(), "power_profile=%s: %s=%.3f 超过档位上限 %.3f，已钳位",
+        profile->name, key, value, cap);
+      value = cap;
+    }
+  };
+  apply_profile_cap(max_vx_, profile->max_vx, "max_vx");
+  apply_profile_cap(max_vy_, profile->max_vy, "max_vy");
+  apply_profile_cap(max_linear_speed_, profile->max_linear_speed, "max_linear_speed");
+  apply_profile_cap(max_wz_, profile->max_wz, "max_wz");
+  apply_profile_cap(max_linear_accel_, profile->max_linear_accel, "max_linear_accel");
+  apply_profile_cap(max_angular_accel_, profile->max_angular_accel, "max_angular_accel");
+
   RCLCPP_INFO(
     get_logger(),
     "协议参数: 上→下 %zu 字节 (data_length=%u), 发送 %.1f Hz, 看门狗 %.0f ms, "
+    "功率档 %s, "
     "限速 |vx|<=%.3f |vy|<=%.3f 平移<=%.3f m/s |wz|<=%.3f rad/s, "
     "限加速度 平移<=%.3f m/s² 自转<=%.3f rad/s²",
     FRAME_LENGTH_CMD, static_cast<unsigned>(DATA_LENGTH_CMD), send_rate_hz_,
-    cmd_timeout_sec_ * 1000.0, max_vx_, max_vy_, max_linear_speed_, max_wz_,
-    max_linear_accel_, max_angular_accel_);
+    cmd_timeout_sec_ * 1000.0, profile->name, max_vx_, max_vy_, max_linear_speed_,
+    max_wz_, max_linear_accel_, max_angular_accel_);
 
   // 速度对齐是"改车行为"的开关, 必须显眼: 生效时每次启动都提醒一次,
   // 免得调完忘了改回来 (或以为自己在跑原始标定)。
